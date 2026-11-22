@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111217">
+  <title>Phím & Nhịp · Luyện piano</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="png-score.js" defer></script>
+  <script src="thu-tinh.js" defer></script>
+  <script src="music.js" defer></script>
+  <script src="pdf-chords.js" defer></script>
+  <script src="mua-xuan.js" defer></script>
+  <script src="audio-input.js" defer></script>
+  <script src="pdf-reader.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <div class="top-inner">
+      <div class="brand">
+        <span class="brand-icon" aria-hidden="true"><i></i><i></i><i></i></span>
+        <div><strong>Phím & Nhịp</strong><small>PHÒNG TẬP PIANO</small></div>
+      </div>
+      <div class="header-actions">
+        <button id="library-toggle" class="button secondary" type="button" aria-controls="sidebar" aria-expanded="true">Thư viện</button>
+        <button id="midi" class="button secondary" type="button" aria-label="Kết nối MIDI"><span class="header-full">Kết nối MIDI</span><span class="header-short" aria-hidden="true">MIDI</span></button>
+        <label id="midi-picker" hidden>Cổng đàn <select id="midi-port"></select></label>
+        <output id="midi-signal" aria-live="off"></output>
+        <button id="import" class="button accent" type="button" aria-label="Nhập bản nhạc"><span aria-hidden="true">＋</span> <span class="header-full">Nhập bản nhạc</span><span class="header-short" aria-hidden="true">Nhập nhạc</span></button>
+        <input id="file" type="file" accept=".pdf,.png,.musicxml,.xml,.mxl,.mid,.midi" hidden>
+      </div>
+    </div>
+  </header>
+  <main class="layout">
+    <aside class="sidebar" id="sidebar" aria-label="Thư viện và cài đặt">
+      <section class="panel library">
+        <h2>Thư viện</h2>
+        <div id="library" class="songs"></div>
+        <button id="drop" type="button" class="drop">
+          <span class="drop-icon" aria-hidden="true">＋</span>
+          <strong>Thêm bản nhạc</strong>
+          <span>Kéo thả hoặc chọn tệp</span>
+          <small>PDF · PNG · MusicXML · MXL · MIDI</small>
+        </button>
+        <p id="import-status" class="import-status" role="status" hidden></p>
+      </section>
+      <section class="panel tips pdf-library-panel">
+        <h2>Sheet Music</h2>
+        <select id="pdf-library" aria-label="Bản PDF trong Sheet Music"><option value="">Chọn bản PDF…</option></select>
+        <button type="button" class="button secondary" id="choose-folder">Chọn thư mục PDF</button>
+        <input id="pdf-folder" type="file" webkitdirectory multiple hidden>
+        <p id="pdf-status" role="status"></p>
+      </section>
+      <section class="panel tips">
+        <h2>Âm thanh KS1</h2>
+        <p>Chọn âm thanh USB của đàn hoặc micro. Đánh từng nốt riêng, kể cả khi tập hợp âm.</p>
+        <button class="button secondary" type="button" id="sound-start" aria-pressed="false">Nghe tiếng đàn</button>
+        <select id="sound-device" aria-label="Đầu vào âm thanh" hidden></select>
+        <p id="sound-status" role="status"></p>
+      </section>
+      <section class="panel tips">
+        <label for="key-language">Tên nốt trên phím đàn</label>
+        <select id="key-language">
+          <option value="international">C D E F G A B</option>
+          <option value="vi">Đô Rê Mi Fa Sol La Si</option>
+        </select>
+        <p>Chạm phím trên màn hình, kết nối MIDI hoặc dùng “Nghe tiếng đàn”.</p>
+      </section>
+    </aside>
+    <div class="workspace">
+      <div id="pdf-preview-slot"><section id="pdf-reader" class="panel trainer" hidden>
+        <div id="pdf-quick"><div id="pdf-action-group">
+          <div class="pdf-tools pdf-heading"><h2 id="pdf-title"></h2><button class="button accent" id="pdf-score" type="button" disabled>Tập cả bản</button><button class="button secondary" type="button" id="pdf-close">Đóng PDF</button></div>
+          <p class="metadata" id="pdf-score-status" role="status"></p>
+        </div></div>
+        <div class="pdf-tools"><label>Trang <select id="pdf-page"></select></label>
+          <label id="pdf-chord-choices" hidden>Hợp âm <select id="pdf-chord-variant"><option value="main">Dòng dưới</option><option value="alternate">Dòng trên</option></select></label>
+          <a id="pdf-original" target="_blank" rel="noopener">Mở PDF gốc</a></div>
+        <div id="pdf-scroll" class="score-window"><div class="score-paper"><canvas id="pdf-canvas" aria-label="Bản nhạc PDF"></canvas><div id="pdf-cursor" aria-hidden="true" hidden></div></div></div>
+        <p class="metadata" id="pdf-no-staves" hidden>Chưa tìm thấy khuông trên trang này.</p>
+        <nav id="pdf-stave-nav" class="score-nav" aria-label="Duyệt khuông PDF" hidden>
+          <button id="pdf-prev-staves" class="button square secondary" type="button" aria-label="Các khuông trước">‹</button>
+          <output id="pdf-stave-range"></output>
+          <button id="pdf-next-staves" class="button square secondary" type="button" aria-label="Các khuông tiếp theo">›</button>
+        </nav>
+        <details class="pdf-settings">
+        <summary>Tùy chọn khuông và chỉnh nốt</summary>
+        <div id="pdf-compact-actions"></div>
+        <div class="pdf-tools"><label>Khuông <select id="pdf-staff"></select></label>
+          <label>Khóa <select id="pdf-clef"><option value="treble">Sol</option><option value="bass">Fa</option></select></label>
+          <label>Hóa biểu <select id="pdf-key"></select></label>
+          <button class="button secondary" id="pdf-practice" type="button">Tập khuông này</button>
+          <button class="button secondary" id="pdf-full" type="button">Tập cả trang</button></div>
+        <div class="pdf-tools" id="pdf-edit-tools"><label>Chạm bản nhạc <select id="pdf-tool">
+          <option value="seek">Chọn vị trí</option><option value="match">Tìm đầu nốt cùng hình</option><option value="add">Thêm nốt</option><option value="edit">Sửa nốt gần nhất</option>
+          <option value="delete">Xóa nốt</option></select></label>
+          <label>Dấu của nốt sửa <select id="pdf-alter"><option value="">Theo hóa biểu</option>
+          <option value="0">Bình</option><option value="1">Thăng</option><option value="-1">Giáng</option></select></label>
+          <label>Trường độ nốt sửa <select id="pdf-duration">
+          <option value=".25">Móc kép</option><option value=".5">Móc đơn</option><option value=".75">Móc đơn chấm dôi</option>
+          <option value="1" selected>Đen</option><option value="1.5">Đen chấm dôi</option><option value="2">Trắng</option>
+          <option value="3">Trắng chấm dôi</option><option value="4">Tròn</option></select></label></div>
+        <p class="metadata" id="pdf-help" role="status"></p>
+        </details>
+      </section></div>
+      <section class="panel trainer" id="practice-empty">
+        <h1>Chọn bản nhạc để tập</h1>
+        <p class="metadata">Mở một bài trong Sheet Music hoặc nhập bản nhạc của bạn.</p>
+      </section>
+      <div id="practice-workspace" hidden>
+      <section class="song-heading">
+        <div>
+          <p id="song-type" class="eyebrow"></p>
+          <h1 id="title"></h1>
+          <p id="metadata" class="metadata"></p>
+        </div>
+        <div class="segmented" role="group" aria-label="Chế độ chơi">
+          <button id="practice" type="button" aria-pressed="true">Tập từng nốt</button>
+          <button id="listen" type="button" aria-pressed="false">Nghe mẫu</button>
+        </div>
+      </section>
+      <section class="panel trainer" id="practice-trainer" aria-label="Hướng dẫn đánh đàn">
+        <div class="trainer-top">
+          <div>
+            <p id="cue-label" class="eyebrow">NỐT CẦN ĐÁNH</p>
+            <div id="cue" class="cue" aria-live="polite"></div>
+            <span id="practice-chord" class="metadata" hidden></span>
+          </div>
+          <div class="hand-control">
+            <label for="hand">Tay tập</label>
+            <select id="hand">
+              <option value="both">Hai tay</option>
+              <option value="right">Tay phải</option>
+              <option value="left">Tay trái</option>
+            </select>
+          </div>
+        </div>
+        <label class="sheet-toggle"><input type="checkbox" id="show-sheet" aria-controls="sheet-view"> Hiển thị sheet nhạc</label>
+        <section id="sheet-view" hidden aria-label="Sheet nhạc">
+          <div id="sheet-pdf-slot" hidden><button id="sheet-reopen" class="button secondary" type="button">Mở lại PDF gốc</button></div>
+          <div id="sheet-notes" class="sheet-scroll"><p>Khuông luyện tập</p><canvas id="sheet-staff" role="img" aria-label="Khuông nốt luyện tập"></canvas></div>
+          <div id="sheet-png" hidden>
+            <div id="png-window" class="score-window"><div class="score-paper"><img id="sheet-image" alt="Bản nhạc PNG"></div></div>
+            <nav class="score-nav" aria-label="Duyệt khuông PNG">
+              <button id="png-prev-staves" class="button square secondary" type="button" aria-label="Các khuông trước">‹</button>
+              <output id="png-stave-range"></output>
+              <button id="png-next-staves" class="button square secondary" type="button" aria-label="Các khuông tiếp theo">›</button>
+              <a id="png-original" target="_blank" rel="noopener">Mở ảnh gốc</a>
+            </nav>
+          </div>
+        </section>
+        <div class="instrument">
+          <div id="roll" class="roll" aria-hidden="true"><div id="lanes" class="lanes"></div><div id="notes" class="notes"></div><div class="strike"></div></div>
+          <div id="keyboard" class="keyboard" role="group" aria-label="Phím đàn piano"></div>
+        </div>
+        <div class="instrument-footer">
+          <div class="legend"><span><i class="right"></i><span id="legend-right">Tay phải</span></span><span><i class="left"></i><span id="legend-left">Tay trái</span></span></div>
+          <span id="feedback" role="status"></span>
+        </div>
+      </section>
+      <section class="panel transport" aria-label="Điều khiển bài tập">
+        <div class="transport-top">
+          <div class="transport-buttons">
+            <button id="reset" class="button square secondary" type="button" title="Về đầu bài" aria-label="Về đầu bài">↺</button>
+            <button id="previous" class="button square secondary" type="button" title="Bước trước" aria-label="Bước trước">‹</button>
+            <button id="play" class="button accent" type="button">▶ Nghe mẫu</button>
+            <button id="next" class="button square secondary" type="button" title="Bước tiếp theo" aria-label="Bước tiếp theo">›</button>
+          </div>
+          <div class="speed"><label for="speed">Tốc độ nghe</label><input id="speed" type="range" min="25" max="150" step="5" value="100"><output id="speed-value" for="speed">100%</output></div>
+        </div>
+        <div class="progress-row">
+          <div class="progress-track" id="progress-track" role="progressbar" aria-label="Tiến độ tập"><div id="progress"></div></div>
+          <span id="progress-label"></span>
+        </div>
+        <details class="loop-controls">
+          <summary>Lặp đoạn A–B</summary>
+          <div class="pdf-tools"><button id="loop-a" class="button secondary" type="button">Đặt đầu đoạn A</button>
+            <button id="loop-b" class="button secondary" type="button">Đặt cuối đoạn B</button>
+            <label><input type="checkbox" id="loop-on"> Lặp A–B</label><span id="loop-range"></span></div>
+        </details>
+      </section>
+      </div>
+    </div>
+  </main>
+</body>
+</html>
