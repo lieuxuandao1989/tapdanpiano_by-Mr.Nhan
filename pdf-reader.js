@@ -18,12 +18,18 @@
   }
   let offline, cursorData, chordData;
 
-  function connect(addPractice, onOpen, jumpTo) {
+  function connect(addPractice, onOpen, jumpTo, showFingering) {
     const el = id => document.getElementById(id);
     const library = el('pdf-library'), reader = el('pdf-reader'), page = el('pdf-page');
     const staff = el('pdf-staff'), practice = el('pdf-practice'), help = el('pdf-help');
     const canvas = el('pdf-canvas'), original = el('pdf-original');
     const frame = el('pdf-scroll'), paper = canvas.parentElement;
+    const zoom = el('pdf-zoom');
+    let cursorX;
+    zoom.onclick = () => {
+      PianoPNG.toggleScoreZoom(frame, zoom, cursorX);
+      paintFingering();
+    };
     const staveNav = el('pdf-stave-nav'), staveRange = el('pdf-stave-range');
     const previousStaves = el('pdf-prev-staves'), nextStaves = el('pdf-next-staves');
     const actionGroup = el('pdf-action-group');
@@ -31,7 +37,8 @@
     const preview = el('pdf-preview-slot'), sheet = el('sheet-pdf-slot'), reopen = el('sheet-reopen');
     let choices = [], request = 0, draw = 0, task, doc, url, title, pixels, staves = [];
     let rendering;
-    let staveWindow = -1;
+    let staveWindow = -1, band, fingerView;
+    const fingerCache = new WeakMap();
     let playbackPosition, displayedMarkers = '';
     let verified = false, activeSong, activeGroups = [], currentStep = 0;
     let fullScore = null;
@@ -86,6 +93,8 @@
       task?.destroy().catch(() => {}); task = doc = null;
       if (url) URL.revokeObjectURL(url);
       url = null; pixels = null; staves = [];
+      band = fingerView = undefined;
+      el('pdf-fingers').hidden = true;
       reader.hidden = true; library.value = '';
       preview.append(reader);
       placeActions();
@@ -137,17 +146,53 @@
         }
       }
     }
+    function paintFingering() {
+      const overlay = el('pdf-fingers');
+      const score = activeSong?.pdfSource === sourceFile ? activeSong : null;
+      const groups = score ? activeGroups : null;
+      const width = paper.clientWidth;
+      overlay.hidden = !showFingering() || !band?.count || !width || (!score && !fullScore);
+      if (overlay.hidden) return;
+      if (fingerView?.band === band && fingerView.width === width &&
+        fingerView.groups === groups && fingerView.fullScore === fullScore) return;
+      const pageNumber = Number(page.value);
+      const marks = [];
+      function addNotes(item, notes) {
+        for (const note of notes) {
+          if (!note.finger) continue;
+          const box = boxFor(note, item);
+          if (box?.[0] === pageNumber) marks.push({ note, box });
+          for (const continuation of note.cursorMarks || []) {
+            const box = continuation.box || (continuation.note && boxFor(continuation.note, item));
+            if (box?.[0] === pageNumber) marks.push({ note, box });
+          }
+        }
+      }
+      if (fullScore) {
+        if (!fingerCache.has(fullScore)) fingerCache.set(fullScore, PianoMusic.suggestFingering(fullScore.notes));
+        addNotes(fullScore, fingerCache.get(fullScore));
+      }
+      if (score) addNotes(score, groups.flatMap(group => group.notes));
+      if (PianoPNG.fingerLabels(overlay, marks, band, canvas.width, canvas.height)) {
+        fingerView = { band, groups, fullScore, width };
+      }
+    }
+
     function viewStaves(index) {
       if (!pixels) return;
-      const { first, count } = PianoPNG.showStaves(frame, paper, staves, canvas.width, canvas.height, index);
+      band = PianoPNG.showStaves(frame, paper, staves, canvas.width, canvas.height, index);
+      const { first, count } = band;
+      if (staveWindow !== first) frame.parentElement.scrollLeft = 0;
       staveWindow = first;
       el('pdf-no-staves').hidden = Boolean(count);
       staveNav.hidden = !count;
       previousStaves.disabled = first === 0;
       nextStaves.disabled = first + count >= staves.length;
       staveRange.textContent = 'Khuông ' + (first + 1) + (count > 1 ? '–' + (first + count) : '') + ' / ' + staves.length;
+      paintFingering();
     }
     function moveStaves(index) {
+      cursorX = undefined;
       staff.value = String(index);
       showSettings();
       viewStaves(index);
@@ -169,24 +214,29 @@
         (Number.isFinite(step) ? height / 3 : height * 1.5) / canvas.height];
     }
     function sync(song, groups, step, position, follow = true) {
+      const advanced = activeSong !== song || currentStep !== step;
       activeSong = song; activeGroups = groups; currentStep = step;
       playbackPosition = position;
+      paintFingering();
       const cursor = el('pdf-cursor');
       if (reader.hidden || !doc || !song || song.pdfSource !== sourceFile) { cursor.hidden = true; return; }
       const notes = groups[step]?.notes || [];
-      const boxes = notes.map(note => boxFor(note, song, position)).filter(Boolean);
+      const marks = notes.map(note => ({ note, box: boxFor(note, song, position) })).filter(mark => mark.box);
+      const boxes = marks.map(mark => mark.box);
       const nextPage = boxes.length ? String(Math.max(...boxes.map(box => box[0]))) : song.page;
       if (follow && nextPage && nextPage !== page.value && Number(nextPage) <= doc.numPages) {
         page.value = nextPage;
         renderPage(true);
         return;
       }
-      const visible = [...new Map(boxes.filter(box => box[0] === Number(page.value))
-        .map(box => [box.join(','), box])).values()];
+      const visible = marks.filter(({ box }) => box[0] === Number(page.value));
       cursor.hidden = !pixels || !visible.length;
-      if (cursor.hidden) return;
-      if (follow && staves.length && tool.value === 'seek') {
-        const y = visible[0][2] * canvas.height;
+      if (cursor.hidden) { cursorX = undefined; return; }
+      cursorX = visible[0].box[1];
+      const markerKey = visible.map(({ box }) => box.join(',')).join(';');
+      const changed = displayedMarkers !== markerKey;
+      if (follow && (changed || advanced) && staves.length && tool.value === 'seek') {
+        const y = visible[0].box[2] * canvas.height;
         let index = 0, nearest = Infinity;
         for (const [i, row] of staves.entries()) {
           const distance = Math.abs(y - (row.top + row.bottom) / 2);
@@ -199,15 +249,10 @@
           if (reader.parentElement !== sheet) highlight();
         }
       }
-      const markerKey = visible.map(box => box.join(',')).join(';');
-      if (displayedMarkers !== markerKey) {
+      if (follow && (changed || advanced)) PianoPNG.followScore(frame, cursorX);
+      if (changed) {
         displayedMarkers = markerKey;
-        cursor.replaceChildren(...visible.map(([, x, y, w, h]) => {
-          const mark = document.createElement('span');
-          mark.className = 'score-note-marker';
-          Object.assign(mark.style, { left: x * 100 + '%', top: y * 100 + '%', width: w * 100 + '%', height: h * 100 + '%' });
-          return mark;
-        }));
+        PianoPNG.scoreMarkers(cursor, visible);
       }
     }
     async function renderPage(followCursor = false) {
@@ -215,7 +260,9 @@
       rendering?.cancel(); rendering = null;
       pixels = null; staves = []; practice.disabled = true; staff.replaceChildren();
       displayedMarkers = '';
-      staveWindow = -1; staveNav.hidden = true; frame.hidden = true;
+      cursorX = undefined;
+      staveWindow = -1; band = undefined; staveNav.hidden = true; frame.hidden = true;
+      el('pdf-fingers').hidden = true;
       el('pdf-no-staves').hidden = true;
       el('pdf-full').disabled = true; el('pdf-cursor').hidden = true;
       canvas.hidden = true; help.textContent = 'Đang đọc trang…';
@@ -223,7 +270,7 @@
         const sheet = await doc.getPage(Number(page.value));
         if (version !== draw) return;
         const base = sheet.getViewport({ scale: 1 });
-        const viewport = sheet.getViewport({ scale: Math.min(1600 / base.width, 2300 / base.height) });
+        const viewport = sheet.getViewport({ scale: Math.min(1920 / base.width, 2720 / base.height) });
         const buffer = document.createElement('canvas');
         buffer.width = Math.ceil(viewport.width); buffer.height = Math.ceil(viewport.height);
         const ctx = buffer.getContext('2d', { willReadFrequently: true });
@@ -273,14 +320,19 @@
         const loaded = await task.promise;
         if (token !== request) return;
         doc = loaded;
-        const bytes = await doc.getData();
+
         let hash;
         if (globalThis.crypto?.subtle) {
-          const digest = await crypto.subtle.digest('SHA-256', bytes);
+          const digest = await crypto.subtle.digest('SHA-256', await doc.getData());
           if (token !== request) return;
           hash = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
-          verified = hash === MuaXuan.hash;
+        } else if (href) {
+          const response = await fetch(href, { method: 'HEAD' });
+          if (token !== request) return;
+          const fingerprint = response.headers.get('X-Score-Hash');
+          if (response.ok && /^[a-f0-9]{64}$/.test(fingerprint || '')) hash = fingerprint;
         }
+        verified = hash === MuaXuan.hash;
         loadFullScore(hash, token);
         if (token !== request) return;
         page.replaceChildren(...Array.from({ length: doc.numPages }, (_, i) => new Option((i + 1) + ' / ' + doc.numPages, String(i + 1))));
@@ -303,7 +355,7 @@
           if (hash && /^https?:$/.test(location.protocol)) {
             scoreStatus.textContent = 'Đang tìm bản MusicXML…';
             const response = await fetch('/sheet-score/' + hash);
-            if (response.ok) buffers = response.headers.get('Content-Type') === 'application/json'
+            if (response.ok) buffers = response.headers.get('Content-Type')?.split(';')[0] === 'application/json'
               ? (await response.json()).map(decode) : [await response.arrayBuffer()];
             else if (response.status !== 404) throw Error('Máy chủ chưa tải được MusicXML.');
           } else if (hash) {
@@ -336,6 +388,7 @@
               fullScore = { ...score, pdfSource: sourceFile,
                 ...(reviewed?.alternate && { chordVariant: variant.value }) };
               fullButton.disabled = false;
+              paintFingering();
               scoreStatus.textContent = ['MusicXML · ' + score.notes.length + ' nốt.',
                 ...(score.accompaniment ? ['Tay trái đệm theo ký hiệu hợp âm trên PDF.'] : []), ...score.notices].join(' ');
             } catch (error) {
@@ -350,6 +403,7 @@
           return;
         }
         fullScore.pdfSource = sourceFile;
+        paintFingering();
         fullButton.disabled = false;
       } catch (error) {
         if (token === request) scoreStatus.textContent = 'Không mở được bản tập đầy đủ. ' + error.message;
@@ -461,7 +515,10 @@
           cursorMarks: note.cursorMarks?.filter(mark => mark.at >= start && mark.at < end && inSection(mark.box))
             .map(mark => ({ ...mark, at: mark.at - start })) };
       });
-      return { ...fullScore, notes, duration: end - start };
+      const beginning = PianoMusic.beatIndex(fullScore.beats, start);
+      const beats = fullScore.beats.slice(beginning).filter(beat => beat.at < end)
+        .map(beat => ({ ...beat, at: beat.at - start }));
+      return { ...fullScore, notes, beats, duration: end - start };
     }
     async function startPractice(full) {
       if (!pixels || !staves.length) return;
@@ -518,7 +575,7 @@
     practice.addEventListener('click', () => startPractice(false));
     el('pdf-full').addEventListener('click', () => startPractice(true));
     el('pdf-close').addEventListener('click', close);
-    return { open, close, sync, mount, restore };
+    return { open, close, sync, mount, restore, paintFingering };
   }
   globalThis.PianoPDF = { connect };
 })();

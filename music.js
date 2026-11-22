@@ -110,7 +110,40 @@
   }
   const actualChords = changes => changes?.some(chord => chord.pitches.length);
 
-  function finalize({ title, format, notes, tempos = [], units = 1, end = 0, notices = [], harmonies = [], anchors = [] }) {
+  function buildBeats(meters, units, end, time) {
+    const changes = new Map([[0, { at: 0, count: 4, denominator: 4 }]]);
+    for (const meter of meters) {
+      if (Number.isInteger(meter.count) && meter.count >= 1 && meter.count <= 32 &&
+        [1, 2, 4, 8, 16, 32, 64].includes(meter.denominator)) changes.set(meter.at, meter);
+    }
+    const sections = [...changes.values()].sort((a, b) => a.at - b.at);
+    const beats = [];
+    for (const [index, meter] of sections.entries()) {
+      const compound = meter.denominator >= 8 && meter.count >= 6 && meter.count % 3 === 0 ? 3 : 1;
+      const count = meter.count / compound;
+      const stride = units * 4 / meter.denominator * compound;
+      const limit = Math.min(sections[index + 1]?.at ?? end, end);
+      for (let i = 0; meter.at + i * stride < limit - .000001 && beats.length < 200000; i++) {
+        const raw = meter.at + i * stride;
+        const at = time(raw);
+        const period = time(raw + stride) - at;
+        if (period > 0) beats.push({ at, period, number: 1 + i % count, count });
+      }
+    }
+    return beats;
+  }
+
+  function beatIndex(beats, at) {
+    let low = 0, high = beats.length;
+    while (low < high) {
+      const mid = (low + high) >>> 1;
+      if (beats[mid].at <= at + .000001) low = mid + 1;
+      else high = mid;
+    }
+    return Math.max(0, low - 1);
+  }
+
+  function finalize({ title, format, notes, tempos = [], meters = [], units = 1, end = 0, notices = [], harmonies = [], anchors = [] }) {
     notes = notes.filter(note => isPianoKey(note.pitch) && Number.isFinite(note.start) && note.start >= 0 &&
       Number.isFinite(note.duration) && note.duration > 0).sort((a, b) => a.start - b.start || a.pitch - b.pitch);
     if (!notes.length) throw Error('Bản nhạc không có nốt nằm trong phạm vi 88 phím piano.');
@@ -140,9 +173,95 @@
         ...(note.cursorMarks && { cursorMarks: note.cursorMarks.map(mark => ({ ...mark, at: time(mark.at) })) }) };
     });
     const duration = result.reduce((latest, note) => Math.max(latest, note.start + note.duration), time(end));
-    return { title, format, notes: result, duration, bpm: timeline[0].bpm, notices,
+    const rawEnd = notes.reduce((latest, note) => Math.max(latest, note.start + note.duration), end);
+    const beats = buildBeats(meters, units, rawEnd, time);
+    return { title, format, notes: result, duration, bpm: timeline[0].bpm, beats, notices,
       ...(harmonies.length && { harmonies: harmonies.map(chord => ({ ...chord, at: time(chord.at) })) }),
       ...(anchors.length && { anchors: anchors.map(anchor => ({ ...anchor, start: time(anchor.start) })) }) };
+  }
+
+  function createTimingJudge(groups, { first, last, at, clockTime, speed, beats, end, onResult }) {
+    const targets = [];
+    const pitches = new Map();
+    const held = new Map();
+    const toClock = seconds => clockTime + (seconds - at) / speed;
+    for (let step = first; step <= last; step++) {
+      const distinct = new Map();
+      for (const note of groups[step].notes) {
+        if (!distinct.has(note.pitch) || distinct.get(note.pitch).duration < note.duration) distinct.set(note.pitch, note);
+      }
+      for (const note of distinct.values()) {
+        const beat = beats[beatIndex(beats, note.start)];
+        const target = { note, step, due: toClock(note.start), duration: note.duration / speed,
+          period: (beat?.period || .5) / speed };
+        targets.push(target);
+        if (!pitches.has(note.pitch)) pitches.set(note.pitch, []);
+        pitches.get(note.pitch).push(target);
+      }
+    }
+    targets.sort((a, b) => a.due - b.due);
+    const endTime = targets.reduce((latest, target) => Math.max(latest, target.due + target.duration), toClock(end)) + .8;
+    let cursor = 0;
+
+    function release(source, when, measured = true) {
+      const result = held.get(source);
+      if (!result) return;
+      held.delete(source);
+      const actual = Math.max(0, when - result.attack);
+      const { duration } = result.target;
+      const tolerance = Math.min(duration * .45, Math.max(duration * .15, result.microphone ? .15 : .065));
+      if (result.microphone && duration < .20) {
+        result.length = 'uncertain';
+      } else if (!measured && actual < duration - tolerance) {
+        result.length = 'unfinished';
+      } else {
+        result.length = actual < duration - tolerance ? 'short' : 'enough';
+        result.actual = actual;
+        result.atLeast = !measured;
+      }
+      onResult(result);
+    }
+
+    function press(pitch, source, when, microphone) {
+      release(source, when);
+      const row = pitches.get(pitch);
+      if (!row) return;
+      let index = row.firstPending || 0;
+      while (index < row.length && row[index].result) index++;
+      row.firstPending = index;
+      let target;
+      for (let i = index; i < row.length && row[i].due <= when + .42; i++) {
+        const candidate = row[i];
+        if (candidate.result || candidate.due < when - .50) continue;
+        if (!target || Math.abs(candidate.due - when) < Math.abs(target.due - when)) target = candidate;
+      }
+      if (!target) return;
+      const offset = when - target.due;
+      const tolerance = microphone ? Math.max(.13, Math.min(.22, target.period * .22)) :
+        Math.max(.065, Math.min(.14, target.period * .15));
+      const result = { target, attack: when, microphone, offset, length: 'holding',
+        timing: offset < -tolerance ? 'early' : offset > tolerance ? 'late' : 'onTime' };
+      target.result = result;
+      held.set(source, result);
+      onResult(result);
+    }
+
+    function advance(now) {
+      while (cursor < targets.length && targets[cursor].due + .78 <= now) {
+        const target = targets[cursor++];
+        if (!target.result) {
+          target.result = { target, timing: 'missed' };
+          onResult(target.result);
+        }
+      }
+      return now >= endTime;
+    }
+
+    function finish(now) {
+      for (const [source, result] of held) release(source, now - (result.microphone ? .2 : 0), false);
+    }
+
+    return { press, release, advance, finish };
   }
 
   function groupNotes(notes, hand) {
@@ -156,6 +275,106 @@
       else groups.push({ at: note.start, notes: [note] });
     }
     return groups;
+  }
+
+  const fingerPositions = [0, 0, 2.2, 4, 5.8, 8];
+  const blackKey = pitch => [1, 3, 6, 8, 10].includes(pitch % 12);
+
+  function fingeringChoices(notes, direction) {
+    const choices = [];
+    function visit(fingers, first) {
+      const index = fingers.length;
+      if (index === notes.length) {
+        const positions = notes.map((note, i) => note.pitch * direction - fingerPositions[fingers[i]]);
+        const center = positions.reduce((sum, x) => sum + x, 0) / positions.length;
+        let cost = positions.reduce((sum, x) => sum + (x - center) ** 2 * .21, 0);
+        for (const [i, note] of notes.entries()) {
+          const finger = fingers[i];
+          if (finger === 1 && blackKey(note.pitch)) cost += 1.2;
+          if (notes.length === 1) cost += Math.abs(3 - finger) * .06;
+        }
+        choices.push({ fingers, center, cost });
+        return;
+      }
+      const fixed = notes[index].writtenFinger;
+      for (let finger = first; finger <= 5 - (notes.length - index - 1); finger++) {
+        if (!fixed || finger === fixed) visit([...fingers, finger], finger + 1);
+      }
+    }
+    const span = Math.abs(notes.at(-1).pitch - notes[0].pitch);
+    if (notes.length <= 5 && span <= 12) visit([], 1);
+    return choices;
+  }
+
+  function fingerTransition(previous, current, from, to, direction) {
+    const delay = to.at - from.at;
+    let cost = Math.abs(previous.center - current.center) * (delay > .8 ? .23 : .52);
+    if (from.notes.length !== 1 || to.notes.length !== 1) return cost;
+    const difference = (to.notes[0].pitch - from.notes[0].pitch) * direction;
+    const oldFinger = previous.fingers[0], newFinger = current.fingers[0];
+    if (difference === 0) return cost + (oldFinger === newFinger ? 0 : 1.1);
+    if (oldFinger === newFinger) return cost + (delay > .8 ? .8 : 2);
+    if (Math.sign(difference) === Math.sign(newFinger - oldFinger)) return cost;
+    const thumbPass = difference > 0 ? newFinger === 1 : oldFinger === 1;
+    if (thumbPass && Math.abs(difference) <= 4) return cost * .36 + .85 + (Math.max(oldFinger, newFinger) > 3 ? .7 : 0);
+    return cost + (delay > .8 ? 1 : 3.3);
+  }
+
+  function suggestFingering(notes) {
+    const suggestions = new Map();
+    for (const [hand, direction] of [['right', 1], ['left', -1]]) {
+      let line = [];
+      function finish() {
+        if (!line.length) return;
+        let choice = line.at(-1).choices.reduce((best, item) => item.total < best.total ? item : best);
+        for (let index = line.length - 1; index >= 0; index--) {
+          const row = line[index];
+          row.notes.forEach((note, i) => row.pitches.get(note.pitch)
+            .forEach(original => suggestions.set(original, choice.fingers[i])));
+          choice = choice.previous;
+        }
+        line = [];
+      }
+      for (const group of groupNotes(notes, hand)) {
+        const pitches = new Map();
+        for (const note of group.notes) {
+          if (!pitches.has(note.pitch)) pitches.set(note.pitch, []);
+          pitches.get(note.pitch).push(note);
+        }
+        const distinct = [...pitches.values()].map(unison => unison.find(note => note.writtenFinger) || unison[0])
+          .sort((a, b) => direction * (a.pitch - b.pitch));
+        const choices = fingeringChoices(distinct, direction);
+        const last = line.at(-1);
+        if (!choices.length || (last && group.at - last.at > 2)) finish();
+        if (!choices.length) continue;
+        const from = line.at(-1);
+        const row = { at: group.at, pitches, notes: distinct, choices };
+        for (const choice of choices) {
+          choice.total = choice.cost;
+          if (!from) continue;
+          let best = Infinity;
+          for (const prior of from.choices) {
+            const cost = prior.total + fingerTransition(prior, choice, from, row, direction);
+            if (cost < best) { best = cost; choice.previous = prior; }
+          }
+          choice.total += best;
+        }
+        line.push(row);
+      }
+      finish();
+    }
+    return notes.map(note => {
+      const finger = note.writtenFinger || suggestions.get(note);
+      return finger ? { ...note, finger } : note;
+    });
+  }
+
+  function writtenFingering(note) {
+    const fingers = direct(note, 'notations').flatMap(section => direct(section, 'technical'))
+      .flatMap(technical => direct(technical, 'fingering'))
+      .filter(finger => /^[1-5]$/.test(finger.textContent.trim()) && finger.getAttribute('substitution') !== 'yes');
+    const finger = fingers.find(item => item.getAttribute('alternate') !== 'yes') || fingers[0];
+    return finger ? Number(finger.textContent.trim()) : undefined;
   }
 
   function xmlDocument(source) {
@@ -182,6 +401,8 @@
         .map(id => direct(root, 'measure').map(measure => direct(measure, 'part').find(part => part.getAttribute('id') === id)));
     const notes = [];
     const tempos = bpm ? [{ at: 0, bpm }] : [];
+    const meters = [];
+    let meter = { count: 4, denominator: 4 };
     const harmonies = [];
     const printed = new Map();
     for (const [measure, beat, label, scoreBox] of reviewedChords ?? []) {
@@ -208,6 +429,14 @@
       const graceNotes = new Map();
       for (const [measureIndex, measure] of part.entries()) {
         if (partIndex === 0) {
+          const time = direct(measure, 'attributes').map(item => child(item, 'time')).find(Boolean);
+          if (time) {
+            const counts = value(time, 'beats').split('+').map(Number);
+            const count = counts.reduce((sum, item) => sum + item, 0);
+            const denominator = number(time, 'beat-type');
+            if (count > 0 && denominator > 0) meter = { count, denominator };
+          }
+          meters.push({ at: position, ...meter });
           for (const { beat, ...chord } of printed.get(measureIndex + 1) ?? []) {
             harmonies.push({ ...chord, at: position + beat });
           }
@@ -258,11 +487,12 @@
               const voice = value(item, 'voice');
               const hand = multipleStaves ? (staff === 1 ? 'right' : 'left') : guessHand(pitch);
               const spelling = { step, alter, octave };
+              const writtenFinger = writtenFingering(item);
               const graceKey = staff + '/' + voice;
               if (child(item, 'grace')) {
                 if (scoreBox !== false && isPianoKey(pitch)) {
                   const pending = graceNotes.get(graceKey) || [];
-                  pending.push({ pitch, hand, measure: measureIndex + 1, spelling, scoreBox });
+                  pending.push({ pitch, hand, measure: measureIndex + 1, spelling, scoreBox, writtenFinger });
                   graceNotes.set(graceKey, pending);
                 }
                 break;
@@ -286,7 +516,7 @@
               }
               const offset = Math.min(graceOffset, duration / 2);
               const note = { pitch, start: start + offset, duration: duration - offset, hand, measure: measureIndex + 1,
-                spelling, scoreBox };
+                spelling, scoreBox, writtenFinger };
               const tieKey = [staff, voice, pitch].join('/');
               const types = [...direct(item, 'tie'), ...direct(child(item, 'notations'), 'tied')]
                 .map(tie => tie.getAttribute('type'));
@@ -313,7 +543,7 @@
     const hasBassClef = reviewedChords === undefined && measures.some(part => part.some(measure =>
       direct(measure, 'attributes').some(attr => direct(attr, 'clef').some(clef => value(clef, 'sign') === 'F'))));
     if (!hasBassClef) notes.forEach(note => { note.hand = 'right'; });
-    const score = { ...finalize({ title, format, notes, tempos, end, notices, harmonies, anchors }), hasBassClef };
+    const score = { ...finalize({ title, format, notes, tempos, meters, end, notices, harmonies, anchors }), hasBassClef };
     return allParts ? { ...score, measureCount: Math.max(0, ...measures.map(part => part.length)) } :
       withAccompaniment(score, score.harmonies);
   }
@@ -331,6 +561,7 @@
     }
     const notes = [];
     const tempos = [];
+    const meters = [];
     let offset = 8 + headerSize;
     let end = 0;
     for (let track = 0; track < trackCount; track++) {
@@ -372,6 +603,9 @@
             const micros = data.getUint8(offset) * 65536 + data.getUint16(offset + 1);
             if (micros) tempos.push({ at: ticks, bpm: 60000000 / micros });
           }
+          if (type === 0x58 && length === 4) {
+            meters.push({ at: ticks, count: data.getUint8(offset), denominator: 2 ** data.getUint8(offset + 1) });
+          }
           if (type === 0x2f) break;
           offset += length;
           continue;
@@ -401,7 +635,7 @@
       end = Math.max(end, ticks);
       offset = trackEnd;
     }
-    return finalize({ title, format: 'MIDI', notes, tempos, units, end,
+    return finalize({ title, format: 'MIDI', notes, tempos, meters, units, end,
       notices: ['Với MIDI, ứng dụng chia tay theo cao độ.'] });
   }
 
@@ -510,7 +744,7 @@
         reviewedChords?.part, reviewedChords?.bpm)));
     const { bpm, format } = scores[0];
     let duration = 0, measures = 0;
-    const notes = [], notices = new Set();
+    const notes = [], beats = [], notices = new Set();
     const harmonies = [];
     const anchors = [];
     for (const score of scores) {
@@ -520,15 +754,16 @@
       }
       for (const chord of score.harmonies || []) harmonies.push({ ...chord, at: chord.at + duration, measure: chord.measure + measures });
       for (const anchor of score.anchors || []) anchors.push({ ...anchor, start: anchor.start + duration, measure: anchor.measure + measures });
+      for (const beat of score.beats) beats.push({ ...beat, at: beat.at + duration });
       duration += score.duration;
       measures += score.measureCount;
       score.notices.forEach(notice => notices.add(notice));
     }
-    const score = { title, format, bpm, notes, duration, notices: [...notices], harmonies, anchors,
+    const score = { title, format, bpm, notes, duration, beats, notices: [...notices], harmonies, anchors,
       hasBassClef: scores.some(score => score.hasBassClef) };
     return reviewedChords === undefined ? score : withAccompaniment(score, harmonies);
   }
 
   globalThis.PianoMusic = { noteName, spelledName, internationalName, groupNotes, importScore, importRecognizedPDF,
-    finalize, readChord, withAccompaniment };
+    finalize, readChord, withAccompaniment, suggestFingering, beatIndex, createTimingJudge };
 })();

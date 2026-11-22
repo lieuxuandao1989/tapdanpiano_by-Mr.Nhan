@@ -1,2 +1,3 @@
 .omr-runtime/
 Sheet Scores/*.tmp
+dist/

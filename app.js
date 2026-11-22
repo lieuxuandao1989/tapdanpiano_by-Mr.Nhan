@@ -23,17 +23,33 @@
   let song = null;
   let hand = 'both';
   let mode = 'practice';
-  let groups = [];
+  let groups = [], fingeredNotes = [];
   let loopA = 0, loopB = 0;
   const repeat = byId('loop-on');
   let step = 0;
   let position = 0;
-  let playing = false;
+  let playing = false, practicing = false, rhythm;
+  const countSwitch = byId('count-in'), metronomeSwitch = byId('metronome-on');
+  const rhythmButton = byId('practice-rhythm'), metronomeStatus = byId('metronome-status');
+  const clicks = new Set();
+  const timingSwitch = byId('timing-grade'), timingFeedback = byId('timing-feedback');
+  const timingReview = byId('timing-review'), timingResults = byId('timing-results'), timingSummary = byId('timing-summary');
+  const timingRows = new Map();
+  const timingCounts = { early: 0, late: 0, short: 0, missed: 0 };
+  let judge;
   let frame = 0;
   let playbackTime = 0;
   let playbackPosition = 0;
   let scheduled = 0;
-  let speed = 1;
+  const speedPresets = [...byId('speed-presets').querySelectorAll('button')];
+  const defaultSpeed = 60;
+  let initialSpeed = defaultSpeed;
+  try {
+    const stored = Number(localStorage.getItem('piano-practice-speed'));
+    if (stored >= 25 && stored <= 150 && stored % 5 === 0) initialSpeed = stored;
+  } catch {}
+  ui.speed.value = String(initialSpeed);
+  let speed = initialSpeed / 100;
   let importSequence = 0;
   let audio;
   let master;
@@ -84,7 +100,9 @@
 
   function loadSong(item) {
     stopPlayback();
+    clearTimingReport();
     song = item;
+    fingeredNotes = PianoMusic.suggestFingering(item.notes);
     byId('practice-empty').hidden = true;
     byId('practice-workspace').hidden = false;
     if (item.pdfSource || item.imageURL) showSheet.checked = true;
@@ -110,7 +128,7 @@
   }
 
   function rebuildGroups() {
-    groups = groupNotes(song.notes, hand);
+    groups = groupNotes(fingeredNotes, hand);
     loopA = 0; loopB = Math.max(0, groups.length - 1); repeat.checked = false;
     keyboardStart = undefined;
     seek(0);
@@ -176,7 +194,8 @@
       key.dataset.pitch = pitch;
       key.style.left = left + '%';
       key.style.width = span + '%';
-      key.textContent = label;
+      key.append(element('span', 'key-label', label), element('span', 'finger-badge'));
+      key.lastElementChild.setAttribute('aria-hidden', 'true');
       keys.append(key);
       keyElements.set(pitch, key);
       const lane = element('div', black ? 'lane dark' : 'lane');
@@ -189,7 +208,7 @@
   }
 
   function paintKeys() {
-    const targets = new Map((groups[step]?.notes || []).filter(note => !matched.has(note.pitch)).map(note => [note.pitch, note.hand]));
+    const targets = new Map((groups[step]?.notes || []).filter(note => !matched.has(note.pitch)).map(note => [note.pitch, note]));
     const inputPitches = new Set([...inputs.values()].map(input => input.pitch));
     const sounding = new Map();
     if (playing) {
@@ -199,7 +218,17 @@
     for (const [pitch, key] of keyElements) {
       key.classList.toggle('target', targets.has(pitch));
       key.classList.toggle('sounding', inputPitches.has(pitch) || sounding.has(pitch));
-      key.classList.toggle('left', (targets.get(pitch) || sounding.get(pitch)) === 'left');
+      const target = targets.get(pitch);
+      key.classList.toggle('left', (target?.hand || sounding.get(pitch)) === 'left');
+      const finger = showFingering.checked && target?.finger;
+      const badge = key.lastElementChild;
+      const label = key.firstElementChild.textContent;
+      const detail = finger ? fingerDescription(label, target) : label;
+      if (badge.textContent !== String(finger || '')) badge.textContent = finger || '';
+      if (key.title !== detail) {
+        key.title = detail;
+        key.setAttribute('aria-label', detail);
+      }
       key.classList.toggle('wrong', wrongPitch === pitch);
     }
   }
@@ -207,8 +236,8 @@
   function renderRoll() {
     const view = document.createDocumentFragment();
     const height = ui.roll.clientHeight;
-    const pixelsPerSecond = height / 5;
-    const targetTime = mode === 'practice' || !playing ? groups[step]?.at ?? position : position;
+    const pixelsPerSecond = height / (5 * speed);
+    const targetTime = playing || judge ? position : groups[step]?.at ?? position;
     let start = Math.max(0, step - 1);
     while (start > 0 && groups[start].at > targetTime - .4) start--;
     for (let index = start; index < groups.length; index++) {
@@ -232,19 +261,55 @@
   }
 
   const showSheet = byId('show-sheet');
+  const showFingering = byId('show-fingering');
+  try { showFingering.checked = localStorage.getItem('piano-show-fingering') !== 'off'; } catch {}
+  showFingering.addEventListener('change', () => {
+    try { localStorage.setItem('piano-show-fingering', showFingering.checked ? 'on' : 'off'); } catch {}
+    render();
+  });
+  function fingerDescription(label, note) {
+    return label + ' · ' + (note.hand === 'left' ? 'Tay trái' : 'Tay phải') + ' · ngón ' + note.finger;
+  }
   const sheetView = byId('sheet-view');
   const image = byId('sheet-image');
   const imageFrame = byId('png-window');
   const previousImageStaves = byId('png-prev-staves'), nextImageStaves = byId('png-next-staves');
-  let imageWindow = 0, currentImageStaff;
+  let imageWindow = 0, currentImageStaff, currentImageX, imageBand, imageFingerView;
+  const imageZoom = byId('png-zoom');
+  imageZoom.onclick = () => {
+    PianoPNG.toggleScoreZoom(imageFrame, imageZoom, currentImageX);
+    paintImageFingering();
+  };
+  function paintImageFingering() {
+    const overlay = byId('png-fingers');
+    const paperWidth = image.parentElement.clientWidth;
+    overlay.hidden = !showFingering.checked || !imageBand?.count || !paperWidth;
+    if (overlay.hidden) return;
+    if (imageFingerView?.song === song && imageFingerView.band === imageBand && imageFingerView.width === paperWidth) return;
+    const { staves, width, height } = song.imageGeometry;
+    const marks = fingeredNotes.flatMap(note => {
+      const row = staves[note.staff];
+      if (!row || note.staff < imageWindow || note.staff >= imageWindow + imageBand.count ||
+        !Number.isFinite(note.x) || !Number.isFinite(note.steps) || !note.finger) return [];
+      const gap = (row.bottom - row.top) / 4;
+      return [{ note, box: [1, note.x, (row.bottom - note.steps * gap / 2) / height, gap / width, gap / height] }];
+    });
+    if (PianoPNG.fingerLabels(overlay, marks, imageBand, width, height)) {
+      imageFingerView = { song, band: imageBand, width: paperWidth };
+    }
+  }
   function viewImageStaves(index) {
     const { staves, width, height } = song.imageGeometry;
-    const { first, count } = PianoPNG.showStaves(imageFrame, image.parentElement, staves, width, height, index);
+    imageBand = PianoPNG.showStaves(imageFrame, image.parentElement, staves, width, height, index);
+    const { first, count } = imageBand;
+    if (imageWindow !== first) imageFrame.parentElement.scrollLeft = 0;
     imageWindow = first;
+    imageZoom.hidden = !count;
     previousImageStaves.disabled = first === 0;
     nextImageStaves.disabled = first + count >= staves.length;
     byId('png-stave-range').textContent = count ? 'Khuông ' + (first + 1) + (count > 1 ? '–' + (first + count) : '') +
       ' / ' + staves.length : 'Chưa tìm thấy khuông';
+    paintImageFingering();
   }
   previousImageStaves.onclick = () => viewImageStaves(imageWindow - 2);
   nextImageStaves.onclick = () => viewImageStaves(imageWindow + 2);
@@ -267,17 +332,24 @@
     if (image.getAttribute('src') !== (song.imageURL || null)) {
       if (song.imageURL) {
         image.src = byId('png-original').href = song.imageURL;
-        currentImageStaff = undefined;
+        currentImageStaff = currentImageX = undefined;
         viewImageStaves(0);
       }
       else image.removeAttribute('src');
     }
     if (song.imageURL) {
-      const staff = groups[step]?.notes.find(note => Number.isInteger(note.staff))?.staff;
+      const note = groups[step]?.notes.find(note => Number.isInteger(note.staff));
+      const staff = note?.staff;
       if (staff !== undefined && staff !== currentImageStaff) {
         currentImageStaff = staff;
+        currentImageX = undefined;
         if (Math.floor(staff / 2) * 2 !== imageWindow) viewImageStaves(staff);
       }
+      if (note && Math.floor(staff / 2) * 2 === imageWindow && note.x !== currentImageX) {
+        currentImageX = note.x;
+        PianoPNG.followScore(imageFrame, currentImageX);
+      }
+      paintImageFingering();
     }
     if (pdf || song.imageURL) return;
     const canvas = byId('sheet-staff');
@@ -297,12 +369,13 @@
             : (Math.floor(note.pitch / 12) - 1) * 7 + degrees[note.pitch % 12];
           const bottom = song.vocalPiano || side === 'right' ? 30 : 18; // E4 or G2
           const accidental = note.spelling?.alter ?? Number(noteName(note.pitch).includes('♯'));
-          items.push({ index, y: (bottom - degree) * 4, accidental });
+          items.push({ index, y: (bottom - degree) * 4, accidental,
+            finger: showFingering.checked ? note.finger : undefined });
         }
       }
       if (!items.length) continue;
       const base = height + Math.max(32, ...items.map(n => -n.y)) + 12;
-      height = base + Math.max(0, ...items.map(n => n.y)) + 16;
+      height = base + Math.max(0, ...items.map(n => n.y)) + (showFingering.checked ? 21 : 16);
       staves.push({ side, base, items });
     }
     height = Math.max(height, 56);
@@ -342,9 +415,21 @@
           ctx.fillText((n.accidental < 0 ? '♭' : '♯').repeat(Math.abs(n.accidental)), x - 17, y + 5);
         }
       }
+      const digits = new Map();
+      for (const note of items) {
+        if (!note.finger) continue;
+        if (!digits.has(note.index)) digits.set(note.index, []);
+        digits.get(note.index).push(String(note.finger));
+      }
+      ctx.font = 'bold 12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = side === 'left' ? '#593c94' : '#28583e';
+      const baseline = base + Math.max(0, ...items.map(note => note.y)) + 16;
+      for (const [index, fingers] of digits) ctx.fillText(fingers.join('·'), xFor(index), baseline, spacing - 4);
+      ctx.textAlign = 'start';
     }
     canvas.setAttribute('aria-label', visible.length ? 'Khuông luyện tập, ' + visible.map((g, i) =>
-      (page + i === step ? 'bước hiện tại ' : '') + g.notes.map(displayNote).join(' và ')).join(', ') : 'Không có nốt');
+      (page + i === step ? 'bước hiện tại ' : '') + g.notes.map(note => showFingering.checked && note.finger ? fingerDescription(displayNote(note), note) : displayNote(note)).join(' và ')).join(', ') : 'Không có nốt');
   }
 
   function render() {
@@ -363,9 +448,16 @@
     byId('practice-chord').hidden = !chord;
     byId('practice-chord').textContent = chord ? 'Hợp âm tay trái · ' + chord : '';
     if (current) {
-      const pitches = new Map(current.notes.map(note => [note.pitch, note]));
-      ui.cue.replaceChildren(...[...pitches.values()].map(note =>
-        element('span', `cue-token ${note.hand}${matched.has(note.pitch) ? ' hit' : ''}`, displayNote(note))));
+      const pitches = new Map(current.notes.map(note => [note.hand + '/' + note.pitch, note]));
+      ui.cue.replaceChildren(...[...pitches.values()].map(note => {
+        const label = displayNote(note);
+        const token = element('span', `cue-token ${note.hand}${matched.has(note.pitch) ? ' hit' : ''}`, label);
+        if (showFingering.checked && note.finger) {
+          token.title = fingerDescription(label, note);
+          token.append(element('span', 'cue-finger', String(note.finger)));
+        }
+        return token;
+      }));
     } else {
       ui.cue.textContent = groups.length ? 'Hoàn thành' : 'Không có nốt cho tay này';
     }
@@ -373,7 +465,13 @@
     ui.next.disabled = step >= groups.length;
     ui.play.disabled = groups.length === 0;
     ui.play.textContent = playing ? 'Ⅱ Tạm dừng' : '▶ Nghe mẫu';
-    ui['speed-value'].textContent = Math.round(speed * 100) + '%';
+    rhythmButton.disabled = !groups.length;
+    rhythmButton.setAttribute('aria-pressed', String(practicing));
+    rhythmButton.textContent = practicing ? 'Dừng nhịp' : 'Tập theo nhịp';
+    const rate = Math.round(speed * 100);
+    ui['speed-value'].textContent = rate + '%';
+    ui.speed.setAttribute('aria-valuetext', rate + '% · ' + Math.round(song.bpm * speed) + ' BPM');
+    for (const button of speedPresets) button.setAttribute('aria-pressed', String(Number(button.dataset.speed) === rate));
     ui.progress.style.width = (groups.length ? step / groups.length * 100 : 0) + '%';
     ui['progress-track'].setAttribute('aria-valuenow', String(step));
     ui['progress-track'].setAttribute('aria-valuemax', String(groups.length || 1));
@@ -431,23 +529,32 @@
     return voice;
   }
 
-  function press(pitch, source, velocity = .7) {
+  function press(pitch, source, velocity = .7, timestamp = performance.now()) {
     if (inputs.has(source) || pitch < 21 || pitch > 108) return;
     const input = { pitch };
     inputs.set(source, input);
-    if (source !== 'audio-input') try {
+    try {
       prepareAudio().then(() => {
         if (inputs.get(source) === input) input.voice = voiceFor(pitch, velocity, audio.currentTime);
       }).catch(() => announce('Trình duyệt chưa cho phép phát âm thanh.'));
     } catch {
       announce('Trình duyệt này không phát được tiếng đàn.');
     }
-    if (mode !== 'practice' || !groups[step]) {
+    if (judge) {
+      judge.press(pitch, source, inputClock(timestamp), false);
+      paintKeys();
+    } else acceptPitches([pitch]);
+  }
+
+  function acceptPitches(pitches) {
+    const current = groups[step];
+    if (mode !== 'practice' || !current || !pitches.length || countingIn()) {
       paintKeys();
       return;
     }
-    const current = groups[step];
-    if (!current.notes.some(note => note.pitch === pitch)) {
+    const correct = pitches.filter(pitch => current.notes.some(note => note.pitch === pitch));
+    if (!correct.length) {
+      const pitch = pitches[0];
       wrongPitch = pitch;
       clearTimeout(wrongTimer);
       paintKeys();
@@ -456,12 +563,13 @@
       return;
     }
     wrongPitch = null;
-    matched.add(pitch);
+    correct.forEach(pitch => matched.add(pitch));
     if (current.notes.every(note => matched.has(note.pitch))) {
       step++;
       if (repeat.checked && step > loopB) step = loopA;
       matched.clear();
       position = groups[step]?.at ?? song.duration;
+      if (step === groups.length && practicing) stopPlayback();
       announce(step === groups.length ? 'Bạn đã hoàn thành bài!' : 'Đúng rồi. Tiếp tục với nốt đang sáng.');
     } else {
       announce('Đánh thêm các nốt còn sáng trong hợp âm.');
@@ -469,19 +577,222 @@
     render();
   }
 
-  function release(source) {
+  function release(source, timestamp = performance.now(), measured = true) {
     const input = inputs.get(source);
     if (!input) return;
+    if (judge) judge.release(source, inputClock(timestamp), measured);
     if (input.voice) input.voice.release(audio.currentTime);
     inputs.delete(source);
     paintKeys();
   }
 
+  function metronomeClick(at, accent) {
+    const click = audio.createOscillator();
+    const envelope = audio.createGain();
+    // Keep the click above the piano range to reduce microphone crosstalk.
+    click.frequency.value = accent ? 6100 : 5100;
+    click.connect(envelope).connect(master);
+    envelope.gain.setValueAtTime(.0001, at);
+    envelope.gain.exponentialRampToValueAtTime(accent ? .15 : .095, at + .002);
+    envelope.gain.exponentialRampToValueAtTime(.0001, at + .024);
+    click.start(at);
+    click.stop(at + .027);
+    clicks.add(click);
+    click.onended = () => { clicks.delete(click); envelope.disconnect(); };
+  }
+
+  function metronomeGrid(at, countIn) {
+    const grid = song.beats.length ? song.beats : [{ at: 0, period: 60 / song.bpm, number: 1, count: 4 }];
+    const index = PianoMusic.beatIndex(grid, at);
+    const anchor = grid[index];
+    const last = grid.at(-1);
+    const start = audio.currentTime + .06;
+    const interval = anchor.period / speed;
+    const count = countIn && countSwitch.checked ? anchor.count : 0;
+    const ready = start + count * interval;
+    let beat = grid[index].at + .000001 < at ? index + 1 : index;
+    if (at > last.at + last.period) beat = grid.length - 1 + Math.ceil((at - last.at) / last.period - .000001);
+    const preceding = count && at - anchor.at > .000001;
+    return { grid, anchor, last, at, start, time: ready + (preceding ? (at - anchor.at) / speed : 0),
+      ready, preceding, interval, count, nextCount: 0, beat };
+  }
+
+  function pulseAt(run, index) {
+    if (index < run.grid.length) return run.grid[index];
+    const offset = index - run.grid.length + 1;
+    return { ...run.last, at: run.last.at + offset * run.last.period,
+      number: 1 + (run.last.number - 1 + offset) % run.last.count };
+  }
+
+  function rhythmPosition(run, now) {
+    return run.at + Math.max(0, now - run.time) * speed;
+  }
+
+  function rhythmStatus(text) {
+    if (metronomeStatus.textContent !== text) metronomeStatus.textContent = text;
+  }
+
+  function scheduleMetronome(now, end = Infinity) {
+    const run = rhythm;
+    const horizon = now + .12;
+    while (run.nextCount < run.count && run.start + run.nextCount * run.interval <= horizon) {
+      const at = run.start + run.nextCount * run.interval;
+      if (at >= now - .08) metronomeClick(Math.max(now, at), run.nextCount === 0);
+      run.nextCount++;
+    }
+    if (run.preceding && run.ready <= horizon) {
+      if (metronomeSwitch.checked && run.ready >= now - .08) metronomeClick(Math.max(now, run.ready), run.anchor.number === 1);
+      run.preceding = false;
+    }
+    const position = rhythmPosition(run, now);
+    const previous = PianoMusic.beatIndex(run.grid, position);
+    const elapsed = Math.max(0, Math.floor((position - run.last.at) / run.last.period + .000001));
+    const current = previous === run.grid.length - 1 ? previous + elapsed : previous;
+    run.beat = Math.max(run.beat, current);
+    for (let scheduledBeats = 0; scheduledBeats < 24; scheduledBeats++) {
+      const beat = pulseAt(run, run.beat);
+      const at = run.time + (beat.at - run.at) / speed;
+      if (at > horizon || beat.at >= end) break;
+      if (metronomeSwitch.checked && at >= now - .08) metronomeClick(Math.max(now, at), beat.number === 1);
+      run.beat++;
+    }
+    if (run.count && now < run.ready) {
+      const beat = Math.max(1, 1 + Math.floor((now - run.start) / run.interval));
+      rhythmStatus('Đếm vào · ' + beat + ' / ' + run.count);
+    } else if (now < run.time) rhythmStatus('Vào bài');
+    else {
+      const beat = pulseAt(run, current);
+      rhythmStatus('Phách ' + beat.number + ' / ' + beat.count + ' · ' + Math.round(60 * speed / beat.period) + ' BPM');
+    }
+  }
+
+  function clearTimingReport() {
+    timingRows.clear();
+    timingCounts.early = timingCounts.late = timingCounts.short = timingCounts.missed = 0;
+    timingResults.replaceChildren();
+    timingReview.hidden = true;
+    timingFeedback.hidden = true;
+  }
+
+  function showTimingResult(result) {
+    const { target } = result;
+    const timing = { early: 'Sớm', late: 'Muộn', onTime: 'Đúng nhịp', missed: 'Bỏ sót' }[result.timing];
+    const number = value => Math.round(value * 1000) + ' ms';
+    const offset = result.timing === 'early' || result.timing === 'late' ? ' ' + number(Math.abs(result.offset)) : '';
+    const lengths = {
+      holding: 'Đang giữ',
+      short: result.actual == null ? '' : 'Giữ ngắn ' + number(target.duration - result.actual),
+      enough: 'Đủ trường độ',
+      uncertain: 'Nốt quá ngắn để đo chắc qua micro',
+      unfinished: 'Chưa đo hết trường độ',
+    };
+    const length = lengths[result.length];
+    const measured = result.actual != null
+      ? ' (' + (result.atLeast ? '≥' : '') + number(result.actual) + ' / ' + number(target.duration) + ')' : '';
+    const place = target.note.measure ? 'Ô ' + target.note.measure + ' · ' : '';
+    const text = place + 'Bước ' + (target.step + 1) + ' · ' + displayNote(target.note) + ' · ' + timing +
+      offset + (length ? ' · ' + length + measured : '');
+    let row = timingRows.get(target);
+    if (!row) {
+      row = element('li');
+      timingRows.set(target, row);
+      timingResults.prepend(row);
+      if (result.timing !== 'onTime') timingCounts[result.timing]++;
+    }
+    if (result.length === 'short' && row.dataset.short !== 'true') {
+      timingCounts.short++;
+      row.dataset.short = 'true';
+    }
+    const issue = result.timing !== 'onTime' || result.length === 'short';
+    row.textContent = text;
+    row.dataset.issue = String(issue);
+    timingFeedback.hidden = timingReview.hidden = false;
+    timingFeedback.textContent = text;
+    timingFeedback.dataset.issue = String(issue);
+    timingSummary.textContent = timingRows.size + ' nốt · Sớm ' + timingCounts.early + ' · Muộn ' + timingCounts.late +
+      ' · Ngắn ' + timingCounts.short + ' · Bỏ sót ' + timingCounts.missed;
+  }
+
+  function inputClock(timestamp = performance.now()) {
+    const now = performance.now();
+    const time = Number.isFinite(timestamp) && Math.abs(timestamp - now) < 2000 ? timestamp : now;
+    const output = audio.getOutputTimestamp?.();
+    if (output?.performanceTime > 0 && Math.abs(output.performanceTime - now) < 1000) {
+      return output.contextTime + (time - output.performanceTime) / 1000;
+    }
+    return audio.currentTime + (time - now) / 1000;
+  }
+
+  function advanceTimedPractice(now) {
+    position = rhythmPosition(rhythm, now);
+    if (judge.advance(now)) {
+      const looping = repeat.checked;
+      seek(looping ? loopA : groups.length);
+      if (looping) startPracticeRhythm(undefined, false, true);
+      return false;
+    }
+    let next = step;
+    while (next < rhythm.lastStep && groups[next + 1].at <= position) next++;
+    if (next !== step) {
+      step = next;
+      render();
+    } else renderRoll();
+    return true;
+  }
+
+  async function startPracticeRhythm(at, withCount = true, keepReport = false) {
+    if (!groups.length) return;
+    switchMode('practice');
+    if (step >= groups.length) seek(0);
+    if (repeat.checked && (step < loopA || step > loopB)) seek(loopA);
+    const request = ++playbackRequest;
+    try {
+      await prepareAudio();
+    } catch {
+      if (request === playbackRequest) announce('Trình duyệt chưa cho phép phát âm thanh.');
+      return;
+    }
+    if (request !== playbackRequest) return;
+    const start = timingSwitch.checked ? (step === 0 ? 0 : groups[step].at) : (at ?? position);
+    position = start;
+    rhythm = metronomeGrid(start, withCount);
+    practicing = true;
+    if (timingSwitch.checked) {
+      if (!keepReport) clearTimingReport();
+      const last = repeat.checked ? loopB : groups.length - 1;
+      const end = repeat.checked ? (groups[last + 1]?.at ?? song.duration) : song.duration;
+      rhythm.lastStep = last;
+      judge = PianoMusic.createTimingJudge(groups, { first: step, last, at: rhythm.at, clockTime: rhythm.time,
+        speed, beats: rhythm.grid, end, onResult: showTimingResult });
+    }
+    render();
+    function tickPractice() {
+      if (!practicing) return;
+      const now = audio.currentTime;
+      scheduleMetronome(now);
+      if (judge && now >= rhythm.time && !advanceTimedPractice(now)) return;
+      frame = requestAnimationFrame(tickPractice);
+    }
+    tickPractice();
+  }
+
+  function countingIn() {
+    return practicing && audio.currentTime < rhythm.time;
+  }
+
   function stopPlayback() {
     playbackRequest++;
-    if (!playing) return;
-    playing = false;
+    if (!playing && !practicing) return;
+    if (judge) {
+      judge.finish(inputClock());
+      judge = undefined;
+    }
+    playing = practicing = false;
+    rhythm = undefined;
     cancelAnimationFrame(frame);
+    for (const click of clicks) click.stop();
+    clicks.clear();
+    rhythmStatus('');
     for (const voice of sampleVoices) {
       voice.release(audio.currentTime);
     }
@@ -490,11 +801,16 @@
 
   function tick() {
     const now = audio.currentTime;
-    position = playbackPosition + Math.max(0, now - playbackTime) * speed;
+    position = rhythmPosition(rhythm, now);
     const last = repeat.checked ? loopB : groups.length - 1;
     const end = groups[last + 1]?.at ?? song.duration;
+    scheduleMetronome(now, end);
+    if (now + .12 < playbackTime) {
+      frame = requestAnimationFrame(tick);
+      return;
+    }
     if (repeat.checked && position >= end) {
-      seek(loopA); togglePlayback(); return;
+      seek(loopA); togglePlayback(false); return;
     }
     while (scheduled <= last && groups[scheduled].at <= position + .12 * speed) {
       const group = groups[scheduled++];
@@ -523,7 +839,7 @@
     frame = requestAnimationFrame(tick);
   }
 
-  async function togglePlayback() {
+  async function togglePlayback(withCount = true) {
     if (playing) {
       stopPlayback();
       announce('Đã tạm dừng bản mẫu.');
@@ -542,7 +858,8 @@
       return;
     }
     if (request !== playbackRequest) return;
-    playbackTime = audio.currentTime + .025;
+    rhythm = metronomeGrid(position, withCount);
+    playbackTime = rhythm.time;
     playbackPosition = position;
     scheduled = step;
     playing = true;
@@ -595,7 +912,7 @@
     if (activePort === port) return ports.length;
     if (activePort) {
       activePort.onmidimessage = null;
-      for (const source of inputs.keys()) if (source.startsWith(`midi:${activePort.id}:`)) release(source);
+      for (const source of inputs.keys()) if (source.startsWith(`midi:${activePort.id}:`)) release(source, performance.now(), false);
     }
     activePort = port;
     byId('midi-signal').textContent = port ? 'Thử nhấn một phím đàn' : 'Chưa thấy cổng MIDI';
@@ -605,9 +922,9 @@
         const source = `midi:${port.id}:${status & 15}:${pitch}`;
         if ((status >> 4) === 9 && velocity > 0) {
           byId('midi-signal').textContent = 'Đã nhận ' + pitchLabel(pitch);
-          press(pitch, source, velocity / 127);
+          press(pitch, source, velocity / 127, event.timeStamp);
         }
-        else if ((status >> 4) === 8 || (status >> 4) === 9) release(source);
+        else if ((status >> 4) === 8 || (status >> 4) === 9) release(source, event.timeStamp);
       };
     }
     return ports.length;
@@ -626,7 +943,7 @@
       midiAccess ||= await navigator.requestMIDIAccess();
       midiAccess.onstatechange = event => {
         if (event.port.state === 'disconnected') {
-          for (const source of inputs.keys()) if (source.startsWith(`midi:${event.port.id}:`)) release(source);
+          for (const source of inputs.keys()) if (source.startsWith(`midi:${event.port.id}:`)) release(source, performance.now(), false);
         }
         wireMIDI();
       };
@@ -665,23 +982,46 @@
   ui.reset.addEventListener('click', () => seek(0));
   ui.previous.addEventListener('click', () => seek(step - 1));
   ui.next.addEventListener('click', () => seek(step + 1));
-  ui.play.addEventListener('click', togglePlayback);
-  ui.speed.addEventListener('input', () => {
-    const wasPlaying = playing;
-    if (wasPlaying) stopPlayback();
-    speed = Number(ui.speed.value) / 100;
-    render();
-    if (wasPlaying) togglePlayback();
+  ui.play.addEventListener('click', () => togglePlayback());
+  rhythmButton.addEventListener('click', () => {
+    if (practicing) {
+      stopPlayback();
+      render();
+    } else startPracticeRhythm();
   });
+  function setSpeed(percent) {
+    const wasPlaying = playing, wasPracticing = practicing, wasGrading = Boolean(judge);
+    const wasCounting = rhythm && audio.currentTime < rhythm.time;
+    const at = rhythm ? rhythmPosition(rhythm, audio.currentTime) : position;
+    if (rhythm) stopPlayback();
+    if (wasPlaying) position = at;
+    speed = percent / 100;
+    ui.speed.value = String(percent);
+    try { localStorage.setItem('piano-practice-speed', String(percent)); } catch {}
+    render();
+    if (wasPlaying) togglePlayback(wasCounting);
+    if (wasGrading) {
+      position = groups[step]?.at ?? song.duration;
+      announce('Đã đổi tốc độ. Bấm Tập theo nhịp để chấm lượt mới.');
+    } else if (wasPracticing) startPracticeRhythm(at, wasCounting);
+  }
+  timingSwitch.addEventListener('change', () => {
+    if (practicing) { stopPlayback(); render(); }
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && judge) { stopPlayback(); render(); }
+  });
+  ui.speed.addEventListener('input', () => setSpeed(Number(ui.speed.value)));
+  for (const button of speedPresets) button.addEventListener('click', () => setSpeed(Number(button.dataset.speed)));
   ui.keyboard.addEventListener('pointerdown', event => {
     const key = event.target.closest('.key');
     if (!key || event.button !== 0) return;
     event.preventDefault();
     ui.keyboard.setPointerCapture(event.pointerId);
-    press(Number(key.dataset.pitch), `pointer:${event.pointerId}`);
+    press(Number(key.dataset.pitch), `pointer:${event.pointerId}`, .7, event.timeStamp);
   });
   for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) {
-    ui.keyboard.addEventListener(event, e => release(`pointer:${e.pointerId}`));
+    ui.keyboard.addEventListener(event, e => release(`pointer:${e.pointerId}`, e.timeStamp, e.type === 'pointerup'));
   }
   ui.keyboard.addEventListener('click', event => {
     const key = event.target.closest('.key');
@@ -696,7 +1036,7 @@
     render();
   });
   window.addEventListener('blur', () => {
-    for (const source of inputs.keys()) if (!source.startsWith('midi:')) release(source);
+    for (const source of inputs.keys()) if (!source.startsWith('midi:')) release(source, performance.now(), false);
   });
   window.addEventListener('resize', () => {
     if (!song) return;
@@ -705,11 +1045,24 @@
     paintKeys();
     renderRoll();
     renderSheet();
+    pdfReader.paintFingering();
   });
   PianoAudioInput.connect({
-    enabled: () => mode === 'practice' && !playing,
-    onNote: pitch => press(pitch, 'audio-input'),
-    onRelease: () => release('audio-input'), name: pitchLabel
+    enabled: () => mode === 'practice' && !playing && (!countingIn() || judge && audio.currentTime >= rhythm.time - .44),
+    onNotes: (pressed, released, events) => {
+      for (const pitch of released) inputs.delete('audio-input:' + pitch);
+      for (const pitch of pressed) inputs.set('audio-input:' + pitch, { pitch });
+      if (judge) {
+        for (const event of events) {
+          const source = 'audio-input:' + event.pitch;
+          const when = inputClock(event.at);
+          if (event.pressed) judge.press(event.pitch, source, when, true);
+          else judge.release(source, when, !event.cancelled);
+        }
+        paintKeys();
+      } else acceptPitches(pressed);
+    },
+    name: pitchLabel
   });
   byId('loop-a').onclick = () => {
     loopA = Math.min(step, Math.max(0, groups.length - 1)); loopB = Math.max(loopA, loopB); render();
@@ -721,5 +1074,5 @@
   const pdfReader = PianoPDF.connect(item => {
     songs.push(item);
     loadSong(item);
-  }, () => { importSequence++; stopPlayback(); showLibraryPanel(false); render(); }, seek);
+  }, () => { importSequence++; stopPlayback(); showLibraryPanel(false); render(); }, seek, () => showFingering.checked);
 })();

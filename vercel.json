@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": "node build-vercel.js",
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/sheet-library", "destination": "/sheet-library.json" },
+    { "source": "/sheet-score/:hash([a-f0-9]{64})", "destination": "/sheet-score/:hash.json" }
+  ]
+}

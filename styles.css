@@ -29,17 +29,27 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 .pdf-tools h2 { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; }
 .pdf-tools a { color: var(--green); }
 .pdf-tools select, .pdf-tools button, #pdf-library, #sound-device { border-radius: 6px; padding: 6px; }
+.score-viewport { overflow-x: auto; overscroll-behavior-x: contain; border-radius: 7px; }
+.score-viewport.zoomed > .score-window { width: 150%; }
 .score-window { position: relative; width: 100%; overflow: hidden; background: #fff; border-radius: 7px; }
 .score-paper { position: absolute; top: 0; left: 0; }
 #pdf-canvas { width: 100%; height: auto; display: block; }
 #pdf-canvas[hidden] { display: none; }
 #pdf-edit-tools[hidden] { display: none; }
-#pdf-cursor { position: absolute; inset: 0; pointer-events: none; }
+#pdf-cursor, .score-overlay { position: absolute; inset: 0; pointer-events: none; }
+.score-finger {
+  position: absolute; transform: translate(-50%, -50%);
+  border-radius: 4px; padding: 0 3px; color: #173a2b; background: #d9f3df;
+  font: 800 11px/1.18 system-ui, sans-serif; white-space: nowrap; box-shadow: 0 0 0 1px #fff;
+}
+.score-finger.left { background: #e9ddff; color: #4d2b7d; }
 .score-note-marker { position: absolute; transform: translate(-50%, -50%); background: #7699fa62; outline: 2px solid #3155ae; border-radius: 3px; min-width: 5px; min-height: 5px; }
 .score-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; font-size: .85rem; }
 .score-nav[hidden] { display: none; }
 .score-nav output { font-variant-numeric: tabular-nums; }
 .score-nav a { margin-left: auto; color: inherit; }
+.score-zoom { margin-left: auto; }
+.score-zoom[aria-pressed="true"] { border-color: var(--green); color: var(--green); }
 #sheet-png .score-nav { padding: 0 8px 8px; }
 .pdf-settings, .loop-controls { margin-top: 8px; font-size: .88rem; color: var(--muted); }
 summary { cursor: pointer; }
@@ -90,6 +100,13 @@ h1 { margin: 0; font-size: clamp(1.9rem, 4vw, 2.85rem); letter-spacing: -.055em;
 .cue { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 29px; color: var(--muted); font-size: .92rem; }
 .cue-token { border-radius: 6px; padding: 4px 8px; color: #182016; background: var(--green); font-size: .85rem; font-weight: 750; }
 .cue-token.left { background: var(--violet); }
+.cue-finger { display: inline-block; margin-left: 5px; padding: 0 4px; border-radius: 3px; background: #182016; color: #fff; font-size: .75rem; }
+.finger-badge {
+  position: absolute; left: 50%; top: 6px; transform: translateX(-50%);
+  min-width: 1.2em; border-radius: 5px; padding: 1px 3px; background: #182016; color: #fff;
+  font-size: .73rem; line-height: 1.25; text-align: center; pointer-events: none;
+}
+.finger-badge:empty { display: none; }
 .cue-token.hit { opacity: .48; }
 .hand-control { display: flex; align-items: center; gap: 8px; flex: none; }
 .hand-control label, .speed label, .speed output { color: var(--muted); font-size: .85rem; }
@@ -97,6 +114,10 @@ h1 { margin: 0; font-size: clamp(1.9rem, 4vw, 2.85rem); letter-spacing: -.055em;
 .hand-control { position: relative; }
 .hand-control::after { content: ""; position: absolute; right: 10px; top: 42%; width: 6px; height: 6px; transform: rotate(45deg); border: solid #cccddd; border-width: 0 1px 1px 0; pointer-events: none; }
 .instrument { overflow: hidden; border: 1px solid #393c49; border-radius: 10px; }
+.practice-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-bottom: 8px; }
+.practice-tools .sheet-toggle { margin: 0; }
+#practice-sound-status:empty { display: none; }
+#practice-sound-status { margin: 0; }
 .sheet-toggle { display: inline-flex; align-items: center; gap: 7px; margin: 0 0 12px; font-size: .9rem; cursor: pointer; }
 .sheet-toggle input { accent-color: var(--green); width: 16px; height: 16px; }
 #sheet-view { margin-bottom: 12px; border-radius: 9px; background: #fbfaf6; color: #282734; overflow: hidden; }
@@ -135,8 +156,24 @@ h1 { margin: 0; font-size: clamp(1.9rem, 4vw, 2.85rem); letter-spacing: -.055em;
 .transport-top, .transport-buttons, .speed, .progress-row { display: flex; align-items: center; gap: 8px; }
 .transport-top { justify-content: space-between; flex-wrap: wrap; gap: 11px; }
 .square { width: 39px; padding: 0; font-size: 1.2rem; line-height: 1; }
+.speed-controls { display: grid; gap: 6px; min-width: 0; }
 .speed input { width: clamp(72px, 9vw, 124px); accent-color: var(--green); }
+#speed-presets { display: flex; gap: 6px; }
+#speed-presets .button { flex: 1; min-height: 34px; padding: 4px 8px; }
+#speed-presets .button[aria-pressed="true"] { border-color: var(--green); color: var(--green); }
 .speed output { color: var(--green); min-width: 42px; text-align: right; font-variant-numeric: tabular-nums; }
+.rhythm-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 10px; }
+.rhythm-controls label { display: inline-flex; align-items: center; gap: 5px; font-size: .85rem; min-height: 40px; }
+.rhythm-controls input { accent-color: var(--green); margin: 0; }
+#practice-rhythm[aria-pressed="true"] { color: var(--green); border-color: var(--green); }
+#metronome-status { color: var(--green); font-size: .85rem; min-width: 0; font-variant-numeric: tabular-nums; }
+#metronome-status:empty { display: none; }
+.timing-feedback { margin-top: 8px; font-size: .86rem; color: var(--green); overflow-wrap: anywhere; }
+.timing-feedback[data-issue="true"] { color: #ffc488; }
+.timing-review { margin-top: 6px; color: var(--muted); font-size: .85rem; }
+#timing-results { margin: 2px 0 8px; padding-inline-start: 21px; max-height: 200px; overflow-y: auto; }
+#timing-results li { padding-block: 4px; }
+#timing-results li[data-issue="true"] { color: #ffc488; }
 .progress-row { margin-top: 10px; gap: 12px; color: var(--muted); font-size: .8rem; }
 .progress-track { height: 5px; flex: 1; border-radius: 5px; background: #333542; overflow: hidden; }
 #progress { height: 100%; background: var(--green); transition: width .15s ease; }
@@ -156,15 +193,15 @@ h1 { margin: 0; font-size: clamp(1.9rem, 4vw, 2.85rem); letter-spacing: -.055em;
     padding-right: max(12px, env(safe-area-inset-right));
   }
   .top-inner { padding-top: calc(8px + env(safe-area-inset-top)); padding-bottom: 8px; flex-wrap: wrap; gap: 8px; }
-  .brand { gap: 7px; }
-  .brand-icon { width: 33px; height: 33px; border-radius: 9px; }
-  .brand strong { font-size: 1rem; }
+  .brand { gap: 6px; }
+  .brand-icon { width: 29px; height: 29px; border-radius: 8px; }
+  .brand strong { font-size: .92rem; }
   .brand small { display: none; }
   .header-short { display: inline; }
   .header-full { display: none; }
   #library-toggle { display: inline-block; }
-  .header-actions { gap: 5px; flex: 1; justify-content: flex-end; min-width: 0; }
-  .header-actions .button { padding-inline: 7px; font-size: .78rem; }
+  .header-actions { gap: 4px; flex: 1; justify-content: flex-end; min-width: 0; }
+  .header-actions .button { padding-inline: 6px; font-size: .76rem; }
   #midi-picker { flex-basis: 100%; text-align: right; }
   #midi-signal:not(:empty) { max-width: 100%; overflow-wrap: anywhere; }
   .layout { display: flex; flex-direction: column; padding-top: 12px; padding-bottom: calc(14px + env(safe-area-inset-bottom)); gap: 12px; }
@@ -189,7 +226,7 @@ h1 { margin: 0; font-size: clamp(1.9rem, 4vw, 2.85rem); letter-spacing: -.055em;
   .hand-control label { font-size: .75rem; }
   .hand-control select { min-width: 0; max-width: 100%; }
   select, .hand-control select { min-height: 44px; font-size: 16px; }
-  .sheet-toggle { margin-bottom: 1px; }
+  .practice-tools { margin-bottom: 4px; }
   .sheet-toggle input { width: 19px; height: 19px; }
   #sheet-view { margin-bottom: 8px; }
   #sheet-pdf-slot #pdf-reader { padding: 6px; border-radius: 8px; }
@@ -199,7 +236,11 @@ h1 { margin: 0; font-size: clamp(1.9rem, 4vw, 2.85rem); letter-spacing: -.055em;
   .pdf-tools a, .score-nav a { display: inline-flex; align-items: center; min-height: 44px; }
   .pdf-heading h2 { flex-basis: 100%; }
   .pdf-heading .button { flex: 1; }
-  .score-nav .square { width: 44px; }
+  .score-nav .square { width: 44px; flex: none; }
+  .score-nav { flex-wrap: wrap; gap: 4px 7px; }
+  .score-zoom { padding-inline: 7px; }
+  #sheet-view { margin-inline: -7px; }
+  #sheet-pdf-slot #pdf-reader { padding-inline: 4px; }
   .roll { height: clamp(95px, 15svh, 138px); }
   .keyboard { height: clamp(87px, 12svh, 108px); }
   .key { padding-bottom: 7px; font-size: .66rem; }
@@ -210,6 +251,7 @@ h1 { margin: 0; font-size: clamp(1.9rem, 4vw, 2.85rem); letter-spacing: -.055em;
   .transport-buttons { display: grid; grid-template-columns: 44px 44px minmax(0, 1fr) 44px; gap: 6px; }
   .transport-buttons .square { width: 44px; }
   .speed input { width: auto; flex: 1; min-height: 32px; }
+  #speed-presets .button { min-height: 44px; }
   .progress-row { margin-top: 4px; }
   .loop-controls { margin-top: 4px; }
 }
@@ -219,13 +261,13 @@ h1 { margin: 0; font-size: clamp(1.9rem, 4vw, 2.85rem); letter-spacing: -.055em;
   .song-heading { flex-direction: row; align-items: flex-end; justify-content: space-between; }
   #practice-trainer:has(#sheet-view:not([hidden])) {
     display: grid;
-    grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1.38fr) minmax(0, 1fr);
     grid-template-areas: "toggle cue" "score piano" "score status";
     grid-template-rows: auto auto 1fr;
     column-gap: 10px;
     align-items: start;
   }
-  .sheet-toggle { grid-area: toggle; }
+  .practice-tools { grid-area: toggle; margin-bottom: 0; }
   #sheet-view { grid-area: score; margin: 0; }
   .trainer-top { grid-area: cue; }
   .instrument { grid-area: piano; }

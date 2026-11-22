@@ -1,6 +1,9 @@
 'use strict';
 
 const http = require('node:http');
+const https = require('node:https');
+const { readFileSync } = require('node:fs');
+const { createHash } = require('node:crypto');
 const { readFile, readdir } = require('node:fs/promises');
 const { join } = require('node:path');
 
@@ -18,8 +21,11 @@ const files = new Map([
   ['/app.js', ['app.js', 'text/javascript']]
 ]);
 const port = Number(process.argv[2] || 4173);
+const host = process.argv[3] || '127.0.0.1';
+const tlsDir = process.argv[4];
+const profilePort = Number(process.argv[5] || 0);
 
-http.createServer(async (request, response) => {
+async function serveApp(request, response) {
   const path = request.url.split('?')[0];
   let asset = files.get(path);
   if (!['GET', 'HEAD'].includes(request.method)) {
@@ -61,11 +67,39 @@ http.createServer(async (request, response) => {
     if (!asset) { response.writeHead(404).end(); return; }
     const [name, mime] = asset;
     const content = await readFile(join(__dirname, name));
-    response.writeHead(200, { 'Content-Type': mime + '; charset=utf-8', 'Cache-Control': 'no-store' });
+    const headers = { 'Content-Type': mime + '; charset=utf-8', 'Cache-Control': 'no-store' };
+    if (mime === 'application/pdf') headers['X-Score-Hash'] = createHash('sha256').update(content).digest('hex');
+    response.writeHead(200, headers);
     response.end(request.method === 'HEAD' ? undefined : content);
   } catch {
     response.writeHead(500).end();
   }
-}).listen(port, '127.0.0.1', () => {
-  console.log('Phím & Nhịp · http://127.0.0.1:' + port);
+}
+
+const server = tlsDir ? https.createServer({
+  key: readFileSync(join(tlsDir, 'server-key.pem')),
+  cert: readFileSync(join(tlsDir, 'server-cert.pem')),
+}, serveApp) : http.createServer(serveApp);
+server.listen(port, host, () => {
+  console.log('Tác giả: Trần Trí Nhân · ' + (tlsDir ? 'https://' : 'http://') + host + ':' + port);
 });
+
+if (tlsDir && profilePort) {
+  const profileName = 'phim-va-nhip.mobileconfig';
+  const profile = readFileSync(join(tlsDir, profileName));
+  http.createServer((request, response) => {
+    if (request.url !== '/' + profileName || !['GET', 'HEAD'].includes(request.method)) {
+      response.writeHead(404).end();
+      return;
+    }
+    response.writeHead(200, {
+      'Content-Type': 'application/x-apple-aspen-config',
+      'Content-Disposition': 'attachment; filename="' + profileName + '"',
+      'Content-Length': profile.length,
+      'Cache-Control': 'no-store',
+    });
+    response.end(request.method === 'HEAD' ? undefined : profile);
+  }).listen(profilePort, host, () => {
+    console.log('iPhone · http://' + host + ':' + profilePort + '/' + profileName);
+  });
+}

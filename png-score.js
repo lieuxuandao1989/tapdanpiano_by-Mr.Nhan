@@ -247,8 +247,71 @@
     frame.style.aspectRatio = (right - left) + ' / ' + Math.max(1, bottom - top);
     paper.style.width = width / (right - left) * 100 + '%';
     paper.style.transform = 'translate(' + (-left / width * 100) + '%, ' + (-top / height * 100) + '%)';
-    return { first: firstIndex, count: rows.length };
+    return { first: firstIndex, count: rows.length, top, bottom, left, right };
   }
 
-  globalThis.PianoPNG = { readPNG, readPixels, staffPitch, similarHeads, showStaves };
+  function followScore(frame, x) {
+    const viewport = frame.parentElement;
+    if (x == null || viewport.scrollWidth <= viewport.clientWidth) return;
+    const paper = frame.firstElementChild.getBoundingClientRect();
+    const left = viewport.getBoundingClientRect().left;
+    const width = viewport.clientWidth;
+    const note = paper.left + x * paper.width - left;
+    if (note < width * .12 || note > width * .86) viewport.scrollLeft += note - width * .45;
+  }
+
+  function toggleScoreZoom(frame, button, x) {
+    const zoomed = frame.parentElement.classList.toggle('zoomed');
+    button.setAttribute('aria-pressed', String(zoomed));
+    button.textContent = zoomed ? 'Vừa khung' : 'Phóng to';
+    frame.parentElement.scrollLeft = 0;
+    if (zoomed) followScore(frame, x);
+  }
+
+  function fingerLabels(overlay, marks, band, width, height) {
+    const scale = overlay.parentElement.clientWidth / width;
+    if (!scale) return false;
+    const combined = new Map();
+    for (const { box: [, x, y], note } of marks) {
+      if (!note.finger || x * width < band.left || x * width > band.right ||
+        y * height < band.top || y * height > band.bottom) continue;
+      const key = [x.toFixed(4), y.toFixed(4), note.hand].join('/');
+      if (!combined.has(key)) combined.set(key, { x: x * width * scale, y: y * height * scale, hand: note.hand, notes: new Map() });
+      combined.get(key).notes.set(note.pitch, note.finger);
+    }
+    const bounds = { left: band.left * scale, right: band.right * scale,
+      top: band.top * scale, bottom: band.bottom * scale };
+    const placed = [];
+    const fragment = document.createDocumentFragment();
+    for (const item of [...combined.values()].sort((a, b) => a.x - b.x || a.y - b.y)) {
+      const label = document.createElement('span');
+      label.className = 'score-finger ' + item.hand;
+      label.dataset.noteCount = item.notes.size;
+      label.textContent = [...item.notes].sort((a, b) => a[0] - b[0]).map(([, digit]) => digit).join('·');
+      const half = 4 + label.textContent.length * 3.4;
+      const center = Math.max(bounds.left + half, Math.min(bounds.right - half, item.x));
+      const offsets = item.hand === 'left' ? [12, 25, -12, 38, -25, 51] : [-12, -25, 12, -38, 25, -51];
+      const rows = offsets.map(offset => Math.max(bounds.top + 7, Math.min(bounds.bottom - 7, item.y + offset)));
+      const row = rows.find(y => placed.every(other =>
+        Math.abs(other.y - y) >= 13 || Math.abs(other.x - center) >= other.half + half + 1)) ?? rows[0];
+      placed.push({ x: center, y: row, half });
+      label.style.left = center / (width * scale) * 100 + '%';
+      label.style.top = row / (height * scale) * 100 + '%';
+      fragment.append(label);
+    }
+    overlay.replaceChildren(fragment);
+    return true;
+  }
+
+  function scoreMarkers(overlay, marks) {
+    const boxes = new Map(marks.map(({ box }) => [box.join(','), box]));
+    overlay.replaceChildren(...[...boxes.values()].map(([, x, y, w, h]) => {
+      const mark = document.createElement('span');
+      mark.className = 'score-note-marker';
+      Object.assign(mark.style, { left: x * 100 + '%', top: y * 100 + '%', width: w * 100 + '%', height: h * 100 + '%' });
+      return mark;
+    }));
+  }
+
+  globalThis.PianoPNG = { readPNG, readPixels, staffPitch, similarHeads, showStaves, followScore, toggleScoreZoom, scoreMarkers, fingerLabels };
 })();

@@ -49,7 +49,7 @@
       }
       if (length !== 2) throw Error('Sai trường độ ở ô nhịp ' + (index + 1));
     }
-    return { notes, end: start, tempos: [{ at: 0, bpm: 63 }] };
+    return { notes, end: start, tempos: [{ at: 0, bpm: 63 }], meters: [{ at: 0, count: 2, denominator: 4 }] };
   }
   globalThis.MuaXuan = { notesFor, hash: 'cc7487e7a3dbf3a03879b734b5682b3cc8b030b5c94c59b50e00a37a95546233' };
 })();

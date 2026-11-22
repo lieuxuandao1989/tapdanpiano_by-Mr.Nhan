@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#111217">
-  <title>Phím & Nhịp · Luyện piano</title>
+  <title>Tác giả: Trần Trí Nhân · Luyện piano</title>
   <link rel="stylesheet" href="styles.css">
   <script src="png-score.js" defer></script>
   <script src="thu-tinh.js" defer></script>
@@ -20,7 +20,7 @@
     <div class="top-inner">
       <div class="brand">
         <span class="brand-icon" aria-hidden="true"><i></i><i></i><i></i></span>
-        <div><strong>Phím & Nhịp</strong><small>PHÒNG TẬP PIANO</small></div>
+        <div><strong>Tác giả: Trần Trí Nhân</strong><small>PHÒNG TẬP PIANO</small></div>
       </div>
       <div class="header-actions">
         <button id="library-toggle" class="button secondary" type="button" aria-controls="sidebar" aria-expanded="true">Thư viện</button>
@@ -54,7 +54,7 @@
       </section>
       <section class="panel tips">
         <h2>Âm thanh KS1</h2>
-        <p>Chọn âm thanh USB của đàn hoặc micro. Đánh từng nốt riêng, kể cả khi tập hợp âm.</p>
+        <p>Chọn đầu vào USB hoặc micro. Khi bật loa đàn, micro nhận nốt đơn và hợp âm.</p>
         <button class="button secondary" type="button" id="sound-start" aria-pressed="false">Nghe tiếng đàn</button>
         <select id="sound-device" aria-label="Đầu vào âm thanh" hidden></select>
         <p id="sound-status" role="status"></p>
@@ -77,11 +77,12 @@
         <div class="pdf-tools"><label>Trang <select id="pdf-page"></select></label>
           <label id="pdf-chord-choices" hidden>Hợp âm <select id="pdf-chord-variant"><option value="main">Dòng dưới</option><option value="alternate">Dòng trên</option></select></label>
           <a id="pdf-original" target="_blank" rel="noopener">Mở PDF gốc</a></div>
-        <div id="pdf-scroll" class="score-window"><div class="score-paper"><canvas id="pdf-canvas" aria-label="Bản nhạc PDF"></canvas><div id="pdf-cursor" aria-hidden="true" hidden></div></div></div>
+        <div class="score-viewport"><div id="pdf-scroll" class="score-window"><div class="score-paper"><canvas id="pdf-canvas" aria-label="Bản nhạc PDF"></canvas><div id="pdf-cursor" aria-hidden="true" hidden></div><div id="pdf-fingers" class="score-overlay" aria-hidden="true" hidden></div></div></div></div>
         <p class="metadata" id="pdf-no-staves" hidden>Chưa tìm thấy khuông trên trang này.</p>
         <nav id="pdf-stave-nav" class="score-nav" aria-label="Duyệt khuông PDF" hidden>
           <button id="pdf-prev-staves" class="button square secondary" type="button" aria-label="Các khuông trước">‹</button>
           <output id="pdf-stave-range"></output>
+          <button id="pdf-zoom" class="button secondary score-zoom" type="button" aria-pressed="false" aria-controls="pdf-scroll">Phóng to</button>
           <button id="pdf-next-staves" class="button square secondary" type="button" aria-label="Các khuông tiếp theo">›</button>
         </nav>
         <details class="pdf-settings">
@@ -136,15 +137,21 @@
             </select>
           </div>
         </div>
-        <label class="sheet-toggle"><input type="checkbox" id="show-sheet" aria-controls="sheet-view"> Hiển thị sheet nhạc</label>
+        <div class="practice-tools">
+          <label class="sheet-toggle"><input type="checkbox" id="show-sheet" aria-controls="sheet-view"> Hiển thị sheet nhạc</label>
+          <label class="sheet-toggle"><input type="checkbox" id="show-fingering" checked title="1 là ngón cái, 5 là ngón út"> Số ngón</label>
+          <button id="practice-sound" class="button secondary" type="button" aria-pressed="false">Nghe tiếng đàn</button>
+          <output id="practice-sound-status" class="metadata" aria-live="polite"></output>
+        </div>
         <section id="sheet-view" hidden aria-label="Sheet nhạc">
           <div id="sheet-pdf-slot" hidden><button id="sheet-reopen" class="button secondary" type="button">Mở lại PDF gốc</button></div>
           <div id="sheet-notes" class="sheet-scroll"><p>Khuông luyện tập</p><canvas id="sheet-staff" role="img" aria-label="Khuông nốt luyện tập"></canvas></div>
           <div id="sheet-png" hidden>
-            <div id="png-window" class="score-window"><div class="score-paper"><img id="sheet-image" alt="Bản nhạc PNG"></div></div>
+            <div class="score-viewport"><div id="png-window" class="score-window"><div class="score-paper"><img id="sheet-image" alt="Bản nhạc PNG"><div id="png-fingers" class="score-overlay" aria-hidden="true" hidden></div></div></div></div>
             <nav class="score-nav" aria-label="Duyệt khuông PNG">
               <button id="png-prev-staves" class="button square secondary" type="button" aria-label="Các khuông trước">‹</button>
               <output id="png-stave-range"></output>
+              <button id="png-zoom" class="button secondary score-zoom" type="button" aria-pressed="false" aria-controls="png-window">Phóng to</button>
               <button id="png-next-staves" class="button square secondary" type="button" aria-label="Các khuông tiếp theo">›</button>
               <a id="png-original" target="_blank" rel="noopener">Mở ảnh gốc</a>
             </nav>
@@ -167,8 +174,27 @@
             <button id="play" class="button accent" type="button">▶ Nghe mẫu</button>
             <button id="next" class="button square secondary" type="button" title="Bước tiếp theo" aria-label="Bước tiếp theo">›</button>
           </div>
-          <div class="speed"><label for="speed">Tốc độ nghe</label><input id="speed" type="range" min="25" max="150" step="5" value="100"><output id="speed-value" for="speed">100%</output></div>
+          <div class="speed-controls">
+            <div class="speed"><label for="speed">Tốc độ</label><input id="speed" type="range" min="25" max="150" step="5" value="60"><output id="speed-value" for="speed">60%</output></div>
+            <div id="speed-presets" role="group" aria-label="Tốc độ tập">
+              <button class="button secondary" type="button" data-speed="60" aria-pressed="true">Chậm</button>
+              <button class="button secondary" type="button" data-speed="100" aria-pressed="false">Gốc</button>
+              <button class="button secondary" type="button" data-speed="125" aria-pressed="false">Nhanh</button>
+            </div>
+          </div>
         </div>
+        <div class="rhythm-controls">
+          <button id="practice-rhythm" class="button secondary" type="button" aria-pressed="false">Tập theo nhịp</button>
+          <label><input id="count-in" type="checkbox" checked> Đếm vào bài</label>
+          <label><input id="metronome-on" type="checkbox" checked> Metronome</label>
+          <label><input id="timing-grade" type="checkbox" checked> Chấm nhịp &amp; trường độ</label>
+          <output id="metronome-status" aria-live="off"></output>
+        </div>
+        <div class="timing-feedback" id="timing-feedback" role="status" hidden></div>
+        <details class="timing-review" id="timing-review" hidden>
+          <summary id="timing-summary">Kết quả nhịp và trường độ</summary>
+          <ol id="timing-results" reversed></ol>
+        </details>
         <div class="progress-row">
           <div class="progress-track" id="progress-track" role="progressbar" aria-label="Tiến độ tập"><div id="progress"></div></div>
           <span id="progress-label"></span>

@@ -1,4 +1,4 @@
-# Phím & Nhịp
+# Tác giả: Trần Trí Nhân
 
 Ứng dụng tập piano bằng tiếng Việt, chạy trong trình duyệt. Mở `index.html` rồi chọn hoặc nhập bản nhạc để tập. Tệp bản nhạc được đọc trên máy của bạn.
 
@@ -7,7 +7,9 @@
 1. Chọn **Nhập bản nhạc** hoặc kéo thả tệp `.pdf`, `.png`, `.musicxml`, `.xml`, `.mxl`, `.mid` hoặc `.midi`.
 2. Chọn **Hai tay**, **Tay phải** hoặc **Tay trái**. Ứng dụng phân tay theo khuông khi có hai khuông trong cùng một phần MusicXML, hoặc theo cao độ với bản một khuông và MIDI.
 3. Trong **Tập từng nốt**, đánh các phím sáng bằng chuột, cảm ứng, đàn MIDI hoặc **Nghe tiếng đàn**. Bạn có thể đánh lần lượt các nốt trong một hợp âm. Bài tự chuyển bước khi bạn hoàn tất hợp âm.
-4. Bấm **Nghe mẫu** để nghe từ bước đang chọn. Bạn có thể thay đổi tốc độ, tạm dừng, đi qua từng bước hoặc quay về đầu.
+4. Bấm **Nghe mẫu** để nghe từ bước đang chọn. Có ba mức **Chậm 60%**, **Gốc 100%** và **Nhanh 125%**, cùng thanh chỉnh từ 25% đến 150%. Ứng dụng mặc định ở mức 60% và ghi nhớ tốc độ đã chọn cho lần mở sau.
+
+Bật **Số ngón** để xem ngón 1–5 của các nốt trong hai khuông đang xem, trong ô nốt cần đánh và trên phím sáng. Tay phải dùng màu xanh lá, tay trái dùng màu tím. Ngón 1 là ngón cái ở cả hai tay. Ứng dụng dùng số ngón ghi trong MusicXML khi đọc được và gợi ý dựa trên hướng giai điệu, tay chơi và thế hợp âm cho các nốt còn lại.
 
 Thư viện tệp nhập tồn tại trong phiên hiện tại. Khi MusicXML có ký hiệu lặp, ứng dụng đi theo thứ tự các ô nhịp trong tệp.
 
@@ -15,13 +17,19 @@ Chọn **Tên nốt trên phím đàn** để đổi giữa C–B và Đô–Si.
 
 Các hợp âm đã đối chiếu trong **Sheet Music** được gắn vào ô nhịp và phách trên PDF gốc. Tay trái có thể đổi hợp âm trong lúc giai điệu ngân hoặc nghỉ. **Vị Ngọt Đôi Môi** dùng khuông Piano. Với **Xin Còn Gọi Tên Nhau**, chọn dòng hợp âm trước khi bấm **Tập cả bản**. Với MusicXML, ứng dụng dùng dữ liệu hợp âm trong tệp.
 
+## Tập theo nhịp
+
+Chọn tốc độ rồi bấm **Tập theo nhịp** để nghe phách trong khi tự đánh trên KS1. **Đếm vào bài** phát tiếng gõ một ô nhịp trước khi bắt đầu. **Metronome** tiếp tục gõ trong lúc tập hoặc nghe mẫu, với phách đầu ô nhịp được nhấn rõ hơn. Hai tùy chọn có thể bật tắt riêng. Ứng dụng dùng nhịp và thay đổi tempo có trong bản nhạc khi đọc được.
+
+Bật **Chấm nhịp & trường độ** rồi bấm **Tập theo nhịp** để bản tập chạy theo metronome. Phần kết quả ghi tên nốt, vị trí, độ lệch sớm hoặc muộn, trường độ giữ và nốt bị bỏ sót. Khi đổi tốc độ giữa lượt, bấm **Tập theo nhịp** để chấm tiếp ở tốc độ mới. Với MIDI, ứng dụng đo theo lúc bấm và thả phím. Với micro, trường độ được ước lượng từ tiếng đàn nghe được, nhất là khi dùng pedal hoặc có tiếng vang.
+
 ## Nghe tiếng đàn KS1
 
-Trong chế độ **Tập từng nốt**, bấm **Nghe tiếng đàn**, cấp quyền micro rồi chọn đầu vào âm thanh USB của KS1 nếu máy tính đã nhận đàn. Bạn cũng có thể chọn micro và bật loa đàn. Đánh từng nốt riêng để ứng dụng nhận cao độ và chuyển bước. Với hợp âm, đánh lần lượt từng phím. Bấm **Dừng nghe** để tắt đầu vào. Âm thanh được phân tích trên máy.
+Trong chế độ **Tập từng nốt**, bấm **Nghe tiếng đàn**, cấp quyền micro rồi chọn đầu vào âm thanh USB của KS1 nếu máy tính đã nhận đàn. Bạn cũng có thể chọn micro và bật loa đàn. Bạn có thể đánh nốt đơn hoặc bấm đồng thời các phím của hợp âm. Đèn phím và dòng “Nghe được” hiển thị các nốt đã nhận. Với Safari trên iPhone, mở địa chỉ HTTPS của ứng dụng và cấp quyền micro. Bấm **Dừng nghe** để tắt đầu vào. Âm thanh được phân tích trên máy.
 
 ## Đọc PDF trong Sheet Music
 
-Khi tập từ PDF hoặc PNG, **Hiển thị sheet nhạc** cho xem tối đa hai khuông gốc cùng lúc. Dùng **‹ / ›** để xem các khuông khác, hoặc mở bản gốc để xem toàn trang. Với **Tập cả bản** từ Sheet Music, con trỏ theo từng đầu nốt trên PDF và tự chuyển khuông, chuyển trang khi bạn tập hoặc nghe mẫu. Bạn có thể chọn trang hoặc chạm gần một đầu nốt để đến vị trí đó. Tọa độ của các bản MusicXML được ghép từ dữ liệu Audiveris. Một số đầu nốt cần ước lượng vị trí theo khuông.
+Khi tập từ PDF hoặc PNG, **Hiển thị sheet nhạc** cho xem tối đa hai khuông gốc cùng lúc. Dùng **‹ / ›** để xem các khuông khác, hoặc mở bản gốc để xem toàn trang. Bấm **Phóng to** để tăng kích thước khuông 50% và vuốt ngang. Khung tự cuộn ngang theo vị trí nốt trong khi tập. Với **Tập cả bản** từ Sheet Music, con trỏ theo từng đầu nốt trên PDF và tự chuyển khuông, chuyển trang khi bạn tập hoặc nghe mẫu. Bạn có thể chọn trang hoặc chạm gần một đầu nốt để đến vị trí đó. Tọa độ của các bản MusicXML được ghép từ dữ liệu Audiveris. Một số đầu nốt cần ước lượng vị trí theo khuông.
 
 Chọn **Tập cả bản** khi PDF có MusicXML đi kèm. Ứng dụng ghép bản tập theo nội dung của tệp PDF, nên vẫn tìm được khi bạn đổi tên. Với bản xuất tự động, độ chính xác phụ thuộc vào kết quả nhận dạng ký âm của Audiveris. Xem báo cáo `Sheet Scores/ket-qua.csv` để biết tệp nào đọc được và kiểm tra số nốt, ô nhịp, dấu hóa và trường độ.
 
